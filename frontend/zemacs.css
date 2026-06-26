@@ -1,0 +1,13 @@
+/* zemacs-gui — the embedded terminal fills the shell body (the editor IS the window), overriding the
+   shared terminal's floating-dock geometry. appShell provides the chrome, so the terminal's own
+   floating toolbar is hidden. */
+html, body { height: 100%; margin: 0; background: var(--bg-primary, #07070d); }
+#app { height: 100vh; }
+
+#terminalPane.zemacs-fill {
+    position: relative; inset: auto; left: auto; top: auto; right: auto; bottom: auto;
+    width: 100%; height: 100%;
+    border: none; border-radius: 0; box-shadow: none;
+}
+#terminalPane.zemacs-fill .term-toolbar { display: none; }
+#terminalPane.zemacs-fill .term-body { height: 100%; }

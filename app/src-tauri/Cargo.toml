@@ -1,0 +1,20 @@
+# zemacs-gui — the GUI app wrapper around zemacs (a Helix fork TUI editor). A thin Tauri v2 host
+# that runs the `zemacs` binary in an embedded PTY terminal, with the shared zgui-core baseline.
+[workspace]
+
+[package]
+name = "zemacs-gui"
+version = "0.1.0"
+edition = "2021"
+description = "zemacs-gui — desktop GUI wrapper around the zemacs editor (Helix fork), Tauri v2 + zgui baseline"
+license = "UNLICENSED"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Shared embedded PTY terminal (also used by Audio-Haxor, ztunnel, ztranslator, zpwr-daw).
+# The editor (zemacs) runs inside this terminal.
+zpwr-embed-terminal = { path = "../../crates/zpwr-embed-terminal" }

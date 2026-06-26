@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>zemacs</title>
+  <!-- the whole zgui-core component library (incl. appShell/crt/splash chrome) in one sheet -->
+  <link rel="stylesheet" href="lib/zgui-core/webui/all.css">
+  <!-- embedded terminal styles (zpwr-embed-terminal frontend) -->
+  <link rel="stylesheet" href="xterm.css">
+  <link rel="stylesheet" href="terminal.css">
+  <link rel="stylesheet" href="zemacs.css">
+</head>
+<body>
+  <!-- ZGui.appShell mounts here; the zemacs editor runs in a fullscreen terminal inside shell.body -->
+  <div id="app"></div>
+
+  <!-- zgui-core baseline: util/fzf/icons first, then the appShell dependency set -->
+  <script src="lib/zgui-core/webui/util.js"></script>
+  <script src="lib/zgui-core/webui/fzf.js"></script>
+  <script src="lib/zgui-core/webui/icons.js"></script>
+  <script src="lib/zgui-core/webui/search-box.js"></script>
+  <script src="lib/zgui-core/webui/command-palette.js"></script>
+  <script src="lib/zgui-core/webui/shortcuts.js"></script>
+  <script src="lib/zgui-core/webui/drag.js"></script>
+  <script src="lib/zgui-core/webui/colorscheme.js"></script>
+  <script src="lib/zgui-core/webui/crt.js"></script>
+  <script src="lib/zgui-core/webui/splash.js"></script>
+  <script src="lib/zgui-core/webui/baseline.js"></script>
+  <script src="lib/zgui-core/webui/button-bar.js"></script>
+  <script src="lib/zgui-core/webui/embed.js"></script>
+  <script src="lib/zgui-core/webui/app-shell.js"></script>
+
+  <!-- the embedded PTY terminal (shared zpwr-embed-terminal frontend) -->
+  <script src="xterm.js"></script>
+  <script src="terminal.js"></script>
+
+  <!-- mount: appShell + a fullscreen terminal that execs the zemacs editor -->
+  <script src="main.js"></script>
+</body>
+</html>

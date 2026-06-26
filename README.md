@@ -20,19 +20,37 @@ zemacs modal-editing core in a windowed front-end, the way MacVim wraps the Vim
 CLI editor: the same editor underneath, a native window on top. Free and open
 source.
 
-## Features
+## Architecture
 
-- GUI front-end over the zemacs terminal editor — **same modal core, native window**
-- Native tabs, menu bar, and toolbar; GUI font rendering and mouse support
-- Native open/save dialogs and drag-and-drop
-- Modal editing, tree-sitter syntax, and LSP inherited from the zemacs core
-- Cross-platform
+A thin **Tauri v2** shell that runs the `zemacs` binary in an **embedded PTY terminal**
+([`zpwr-embed-terminal`](https://github.com/MenkeTechnologies/zpwr-embed-terminal)) filling the
+window, wrapped in the shared **zgui-core** app baseline (`ZGui.appShell`: command palette, colour
+schemes, settings, CRT/splash). The editor is the same modal core; the window, chrome and theming are
+the GUI. Standard MenkeTechnologies GUI layout — see `GUI_APP_ARCHITECTURE.md` in the meta repo.
+
+```
+zemacs-gui/
+├─ app/src-tauri/        Tauri host: terminal_spawn/write/resize/kill commands
+├─ crates/zpwr-embed-terminal   shared PTY engine (submodule)
+└─ frontend/
+   ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
+   └─ lib/zgui-core             the shared widget library (submodule)
+```
+
+## Features (MVP)
+
+- The full `zemacs` modal editor (Helix fork) in a native window — **same core, GUI shell**
+- zgui-core baseline: ⌘K command palette, colour‑scheme picker, settings, CRT/splash
+- Mouse + truecolor in the embedded terminal
+- *Roadmap:* native tabs / menu bar, open‑save dialogs, drag‑and‑drop, deeper LSP/GUI integration
 
 ## Build
 
+Requires the `zemacs` binary on `PATH` (built from the [`zemacs`](https://github.com/MenkeTechnologies/zemacs) repo).
+
 ```sh
-cargo build
-cargo run
+pnpm install
+pnpm tauri dev      # or: pnpm tauri build
 ```
 
 ## Links
