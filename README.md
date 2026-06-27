@@ -30,27 +30,83 @@ the GUI. Standard MenkeTechnologies GUI layout — see `GUI_APP_ARCHITECTURE.md`
 
 ```
 zemacs-gui/
-├─ app/src-tauri/        Tauri host: terminal_spawn/write/resize/kill commands
-├─ crates/zpwr-embed-terminal   shared PTY engine (submodule)
+├─ app/src-tauri/        Tauri host: terminal + fs + window + open-intake commands
+│   ├─ terminal.rs       PTY spawn/write/resize/kill
+│   ├─ fs_ops.rs         list_dir/home_dir — backs the Open dialog
+│   ├─ window_ops.rs     fullscreen / translucency (blur) / focus
+│   └─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
+├─ crates/
+│   ├─ zemacs            the editor — vendored submodule, built → bundled sidecar
+│   └─ zpwr-embed-terminal   shared PTY engine (submodule)
+├─ scripts/
+│   ├─ mvim              terminal launcher (open files in the running window)
+│   └─ prepare-{zemacs,stryke}-sidecar.mjs   stage the bundled binaries
 └─ frontend/
    ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
+   ├─ menu.js                   the MacVim GUI surface (all zgui widgets → PTY)
    └─ lib/zgui-core             the shared widget library (submodule)
 ```
 
-## Features (MVP)
+## MacVim-style GUI
 
-- The full `zemacs` modal editor (Helix fork) in a native window — **same core, GUI shell**
-- zgui-core baseline: ⌘K command palette, colour‑scheme picker, settings, CRT/splash
-- Mouse + truecolor in the embedded terminal
-- *Roadmap:* native tabs / menu bar, open‑save dialogs, drag‑and‑drop, deeper LSP/GUI integration
+The GUI wraps the modal core the way MacVim wraps Vim. Every surface is a **zgui-core widget**; each
+action is bridged to the editor by writing an ex-command into the PTY (the GUI never edits files
+itself, it drives `zemacs`). Because zemacs is a Helix fork, MacVim "tabs" map to **buffers**.
+
+- **Menu bar** (`ZGui.menubar`) — File / Edit / View / Buffers / Window / Help.
+- **Toolbar** (`ZGui.buttonBar`) — new / open / save / buffer nav / find / split / full screen.
+- **Command palette** (`⌘K`) — every menu action, fuzzy-searchable.
+- **Cmd-shortcuts** — ⌘S save, ⇧⌘S Save As, ⌘O open, ⌘W close buffer, ⌘N new, ⌘Z/⇧⌘Z undo/redo,
+  ⌘F find, ⌘G/⇧⌘G next/prev, ⌘{ ⌘} buffer cycle, ⌃⌘F full screen.
+- **Open / Save As / Help** dialogs (`ZGui.modal` + `ZGui.tree` file browser).
+- **Right-click context menu** in the editor (`ZGui.contextMenu`).
+- **Drag-and-drop** files to open (`ZGui.fileDrag`).
+- **Full screen** + **translucent background** (window-vibrancy); **Preferences** panel.
+- **Open from the terminal / Finder / `mvim://` URL**, forwarded into the running window
+  (single-instance + deep-link). Use `scripts/mvim file…`.
+
+Out of scope (no surface in a PTY/WebView host — they need a native text view): native font rendering
+(ligatures, thin strokes, antialias), Touch Bar, macOS Services, Force Click / dictionary lookup,
+trackpad gesture pseudo-keys, find-pasteboard sharing. A live buffer **tabline** is omitted on
+purpose — a faithful one needs editor↔GUI introspection the raw PTY doesn't expose, and a drifting
+strip would lie about state.
+
+## Bundled binaries (self-contained)
+
+The app **bundles** both the `zemacs` editor and the `stryke` runtime as Tauri `externalBin` sidecars —
+it never depends on either being on the user's `PATH`. Before each dev/build,
+`scripts/prepare-{zemacs,stryke}-sidecar.mjs` stage the binaries into
+`app/src-tauri/binaries/<name>-<target-triple>` (the name `externalBin` requires); at runtime
+`sidecar.rs` resolves the sidecar beside the executable (or the dev staging dir) and the editor is
+launched by absolute path, with `STRYKE_BIN` exported to the bundled stryke. The staged binaries are
+gitignored build artifacts.
+
+- **zemacs** — vendored as the **`crates/zemacs` submodule** and built by the prep script
+  (`cargo build --bin zemacs`); override with `ZEMACS_SIDECAR_BIN`.
+- **stryke** — pulled from the **latest [strykelang](https://github.com/MenkeTechnologies/strykelang)
+  GitHub release** for the host triple (cached by release tag); falls back to a local stryke offline;
+  override with `STRYKE_SIDECAR_BIN`.
 
 ## Build
 
-Requires the `zemacs` binary on `PATH` (built from the [`zemacs`](https://github.com/MenkeTechnologies/zemacs) repo).
-
 ```sh
+git submodule update --init --recursive   # zgui-core, zpwr-embed-terminal, zemacs
 pnpm install
 pnpm tauri dev      # or: pnpm tauri build
+```
+
+The first run builds `crates/zemacs` (Helix-fork workspace — a few minutes) and downloads the stryke
+release; both are cached afterward.
+
+## Releases
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the macOS app on Apple-silicon
+(`aarch64`) and Intel (`x86_64`) runners and attaches the per-arch `.dmg` + zipped `.app` to the
+GitHub release. The bundled zemacs (release build of the submodule) and stryke (latest release) sidecars
+are staged automatically by `beforeBuildCommand`, so each `.app` is self-contained.
+
+```sh
+git tag v0.1.0 && git push --tags
 ```
 
 ## Links

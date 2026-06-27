@@ -1,0 +1,32 @@
+#!/bin/sh
+# mvim — open files in zemacs-gui from the terminal, the way `mvim` opens MacVim. Requires the built
+# app installed (`pnpm tauri build` → drag zemacs-gui.app to /Applications). A second invocation while
+# the app is running forwards its files into the existing window (single-instance), so editing stays in
+# one window. With no arguments it just launches/activates the app.
+#
+#   mvim                 # launch / focus
+#   mvim file1 file2     # open files (relative paths are resolved to absolute)
+#   mvim +42 file        # open file at line 42  (passed through as a leading +N arg)
+
+APP="zemacs-gui"
+
+if [ "$#" -eq 0 ]; then
+    open -a "$APP" 2>/dev/null || open -b "com.menketechnologies.zemacs-gui"
+    exit $?
+fi
+
+# Resolve every path argument to an absolute path (the app runs with its own cwd). Pass-through flags
+# (e.g. +N) are left untouched.
+set -- "$@"
+abs_args=""
+for arg in "$@"; do
+    case "$arg" in
+        -* | +*) abs_args="$abs_args \"$arg\"" ;;
+        /*)      abs_args="$abs_args \"$arg\"" ;;
+        *)       abs_args="$abs_args \"$(pwd)/$arg\"" ;;
+    esac
+done
+
+# `open -n --args` starts a forwarding process; single-instance routes the files into the live window.
+eval open -n -a "$APP" --args $abs_args 2>/dev/null \
+    || eval open -n -b "com.menketechnologies.zemacs-gui" --args $abs_args

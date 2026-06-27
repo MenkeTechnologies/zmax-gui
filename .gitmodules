@@ -4,3 +4,6 @@
 [submodule "crates/zpwr-embed-terminal"]
 	path = crates/zpwr-embed-terminal
 	url = https://github.com/MenkeTechnologies/zpwr-embed-terminal
+[submodule "crates/zemacs"]
+	path = crates/zemacs
+	url = https://github.com/MenkeTechnologies/zemacs

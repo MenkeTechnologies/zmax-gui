@@ -5,8 +5,8 @@
   "identifier": "com.menketechnologies.zemacs-gui",
   "build": {
     "frontendDist": "../../frontend",
-    "beforeDevCommand": "node scripts/copy-embed-terminal.mjs",
-    "beforeBuildCommand": "node scripts/copy-embed-terminal.mjs"
+    "beforeDevCommand": "node scripts/copy-embed-terminal.mjs && node scripts/prepare-stryke-sidecar.mjs && node scripts/prepare-zemacs-sidecar.mjs",
+    "beforeBuildCommand": "node scripts/copy-embed-terminal.mjs && node scripts/prepare-stryke-sidecar.mjs && node scripts/prepare-zemacs-sidecar.mjs"
   },
   "app": {
     "withGlobalTauri": true,
@@ -24,6 +24,13 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["mvim", "zemacs"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -33,6 +40,28 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/stryke",
+      "binaries/zemacs"
+    ],
+    "fileAssociations": [
+      {
+        "name": "Text File",
+        "role": "Editor",
+        "ext": [
+          "txt", "md", "markdown", "rst", "org", "log", "csv", "tsv",
+          "rs", "go", "c", "h", "cc", "cpp", "hpp", "java", "kt", "swift",
+          "js", "mjs", "cjs", "ts", "tsx", "jsx", "vue", "svelte",
+          "py", "rb", "pl", "pm", "php", "lua", "tcl", "r", "jl",
+          "sh", "bash", "zsh", "fish", "ps1", "bat",
+          "html", "htm", "css", "scss", "sass", "less",
+          "json", "json5", "yaml", "yml", "toml", "ini", "conf", "cfg", "env",
+          "xml", "svg", "sql", "graphql", "proto",
+          "vim", "el", "lisp", "clj", "scala", "hs", "ml", "ex", "exs",
+          "dockerfile", "makefile", "cmake", "gradle"
+        ]
+      }
     ]
   }
 }

@@ -32,11 +32,23 @@
   <script src="lib/zgui-core/webui/embed.js"></script>
   <script src="lib/zgui-core/webui/app-shell.js"></script>
 
+  <!-- MacVim-style chrome widgets (menu bar, dialogs, file tree, drag-drop) — all zgui-core -->
+  <script src="lib/zgui-core/webui/context-menu.js"></script>
+  <script src="lib/zgui-core/webui/menubar.js"></script>
+  <script src="lib/zgui-core/webui/modal.js"></script>
+  <script src="lib/zgui-core/webui/modal-drag.js"></script>
+  <script src="lib/zgui-core/webui/tree.js"></script>
+  <script src="lib/zgui-core/webui/file-drag.js"></script>
+  <script src="lib/zgui-core/webui/toolbar.js"></script>
+
   <!-- the embedded PTY terminal (shared zpwr-embed-terminal frontend) -->
   <script src="xterm.js"></script>
   <script src="terminal.js"></script>
 
-  <!-- mount: appShell + a fullscreen terminal that execs the zemacs editor -->
+  <!-- the MacVim GUI bridge (menu/shortcuts/dialogs → PTY); must load before main.js mounts -->
+  <script src="menu.js"></script>
+
+  <!-- mount: appShell + menu bar + a fullscreen terminal that execs the zemacs editor -->
   <script src="main.js"></script>
 </body>
 </html>
