@@ -14,10 +14,18 @@
   function invoke(cmd, args) { var T = core(); return T ? T.invoke(cmd, args || {}) : Promise.reject("no tauri"); }
   function ptyWrite(data) { invoke("terminal_write", { data: data }).catch(function () {}); }
 
+  // Esc MUST arrive on its own. A terminal input parser reads ESC immediately followed by a byte as
+  // Alt+<byte> (so `\x1b:` = Alt+:, not "Esc then :"), which silently drops the command. So we send
+  // ESC first, then the rest after a short delay (longer than the editor's esc-disambiguation window)
+  // — that makes the editor treat ESC as a discrete keypress before the command/keys land.
+  function afterEsc(rest) {
+    ptyWrite("\x1b");
+    setTimeout(function () { ptyWrite(rest); }, 50);
+  }
   // zemacs is a Helix fork with a vim keymap. Run an ex-command from ANY mode: Esc → `:cmd` → Enter.
-  function ex(cmd) { ptyWrite("\x1b:" + cmd + "\r"); }
+  function ex(cmd) { afterEsc(":" + cmd + "\r"); }
   // Send normal-mode keys (Esc first so we're not stuck in insert/command mode).
-  function nkeys(keys) { ptyWrite("\x1b" + keys); }
+  function nkeys(keys) { afterEsc(keys); }
   // Quote a path for Helix typed-command shellwords parsing (handles spaces).
   function q(p) { return '"' + String(p).replace(/"/g, '\\"') + '"'; }
 
@@ -103,8 +111,6 @@
         SEP,
         item(T("zemacs.view.translucent", "Translucent Background"), "", act.blurOn),
         item(T("zemacs.view.opaque", "Opaque Background"), "", act.blurOff),
-        SEP,
-        item(T("zemacs.view.prefs", "Preferences…"), "⌘,", function () { preferences(); }),
       ] },
       { label: T("zemacs.menu.buffers", "Buffers"), items: [
         item(T("zemacs.buffers.next", "Next Buffer"), "⌘}", act.nextBuffer),
@@ -234,26 +240,62 @@
     setTimeout(function () { invoke("take_pending_opens").then(openPaths).catch(function () {}); }, 1500);
   }
 
-  // ── Preferences (ZGui.modal + toggle rows) ──────────────────────────────────────────────────────
-  function toggleRow(parent, label, on, onChange) {
-    var row = document.createElement("div"); row.className = "zemacs-pref-row";
-    var name = document.createElement("span"); name.textContent = label;
+  // ── Settings extension: appended to the appShell ⚙/⌘, Settings panel via settingsExtra (NOT a
+  //    separate modal — the app already has one Settings panel; this just adds the editor's rows) ──
+  function shellRow(label, control) {
+    var row = document.createElement("div"); row.className = "zg-shell-row";
+    var lab = document.createElement("span"); lab.className = "zg-shell-row-label"; lab.textContent = label;
+    row.appendChild(lab); if (control) row.appendChild(control);
+    return row;
+  }
+  function toggleControl(on, onChange) {
     var btn = document.createElement("button"); btn.type = "button";
     btn.className = "zg-shell-toggle" + (on ? " on" : ""); btn.textContent = on ? "ON" : "OFF";
     btn.addEventListener("click", function () {
       var n = !btn.classList.contains("on");
       btn.classList.toggle("on", n); btn.textContent = n ? "ON" : "OFF"; onChange(n);
     });
-    row.appendChild(name); row.appendChild(btn); parent.appendChild(row);
+    return btn;
   }
-  function preferences() {
-    if (!window.ZGui || !ZGui.modal) return;
-    var body = document.createElement("div"); body.className = "zemacs-prefs";
-    toggleRow(body, T("zemacs.prefs.translucent", "Translucent background"), document.body.classList.contains("zemacs-translucent"),
-      function (on) { if (on) act.blurOn(); else act.blurOff(); });
-    toggleRow(body, T("zemacs.prefs.show_hidden", "Show hidden files in Open dialog"), prefs.showHidden,
-      function (on) { prefs.showHidden = on; });
-    ZGui.modal.open({ title: T("zemacs.prefs.title", "Preferences"), body: body, small: true, actions: [{ label: T("zemacs.prefs.done", "Done"), primary: true, close: true }] });
+  // The translated locales shipped in zpwr-i18n (code → native name), for the language picker.
+  var LOCALES = [
+    ["en", "English"], ["de", "Deutsch"], ["es", "Español"], ["es_419", "Español (LatAm)"],
+    ["fr", "Français"], ["it", "Italiano"], ["pt", "Português"], ["pt_br", "Português (BR)"],
+    ["nl", "Nederlands"], ["sv", "Svenska"], ["da", "Dansk"], ["nb", "Norsk Bokmål"],
+    ["fi", "Suomi"], ["pl", "Polski"], ["cs", "Čeština"], ["hu", "Magyar"], ["ro", "Română"],
+    ["el", "Ελληνικά"], ["ru", "Русский"], ["uk", "Українська"], ["tr", "Türkçe"], ["zh", "中文"],
+    ["ja", "日本語"], ["ko", "한국어"], ["hi", "हिन्दी"], ["vi", "Tiếng Việt"], ["id", "Bahasa Indonesia"],
+  ];
+  function languageControl() {
+    var sel = document.createElement("select"); sel.className = "zemacs-lang-select";
+    var cur = (typeof window.savedLocale === "function" && window.savedLocale()) ||
+              (typeof window.detectLocale === "function" && window.detectLocale()) || "en";
+    LOCALES.forEach(function (l) {
+      var o = document.createElement("option"); o.value = l[0]; o.textContent = l[1];
+      if (l[0] === cur) o.selected = true;
+      sel.appendChild(o);
+    });
+    // Switch locale live: loadLocale persists the choice, then re-render the whole UI in place.
+    sel.addEventListener("change", function () {
+      if (typeof window.loadLocale !== "function") return;
+      window.loadLocale(sel.value).then(function () {
+        if (typeof window.zemacsRetranslate === "function") window.zemacsRetranslate();
+      }, function () {});
+    });
+    return sel;
+  }
+  // Called by the appShell Settings panel (main.js passes this as settingsExtra). Adds an editor
+  // section with the language picker + the translucency / hidden-files toggles.
+  function settingsExtra(b) {
+    var sec = document.createElement("div"); sec.className = "zg-shell-section";
+    sec.textContent = T("zemacs.settings.section", "Editor");
+    b.appendChild(sec);
+    b.appendChild(shellRow(T("zemacs.prefs.language", "Language"), languageControl()));
+    b.appendChild(shellRow(T("zemacs.prefs.translucent", "Translucent background"),
+      toggleControl(document.body.classList.contains("zemacs-translucent"),
+        function (on) { if (on) act.blurOn(); else act.blurOff(); })));
+    b.appendChild(shellRow(T("zemacs.prefs.show_hidden", "Show hidden files in Open dialog"),
+      toggleControl(prefs.showHidden, function (on) { prefs.showHidden = on; })));
   }
 
   // ── Toolbar (ZGui.buttonBar) ────────────────────────────────────────────────────────────────────
@@ -346,5 +388,5 @@
     if (_shell && typeof _shell.setPaletteItems === "function") _shell.setPaletteItems(paletteItems());
   }
 
-  window.ZemacsMenu = { mount: mount, retranslate: retranslate, actions: act };
+  window.ZemacsMenu = { mount: mount, retranslate: retranslate, settingsExtra: settingsExtra, actions: act };
 })();

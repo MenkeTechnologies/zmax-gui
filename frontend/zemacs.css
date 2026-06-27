@@ -39,6 +39,14 @@ html, body { height: 100%; margin: 0; background: var(--bg-primary, #07070d); }
 /* ── Preferences rows (zgui modal) ── */
 .zemacs-prefs { display: flex; flex-direction: column; gap: 10px; min-width: 320px; }
 .zemacs-pref-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.zemacs-lang-select {
+    background: var(--bg-secondary, #0a0e14);
+    color: var(--text, #c7f9ff);
+    border: 1px solid var(--border, rgba(5,217,232,0.35));
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+}
 
 /* ── Open dialog file browser (ZGui.modal + ZGui.tree) ── */
 .zemacs-fb { display: flex; flex-direction: column; gap: 8px; min-width: 460px; }

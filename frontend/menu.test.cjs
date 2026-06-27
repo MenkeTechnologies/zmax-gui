@@ -60,8 +60,10 @@ for (const [action, expected] of CASES) {
     const { acts, writes } = load();
     assert.equal(typeof acts[action], "function", `actions.${action} should exist`);
     acts[action]();
-    assert.equal(writes.length, 1, `${action} should write exactly once`);
-    assert.equal(writes[0], expected);
+    // The bridge sends ESC on its own, then the command (Alt-key disambiguation), so assert on the
+    // concatenation; the leading ESC must be a separate chunk.
+    assert.equal(writes[0], "\x1b", `${action} must send ESC on its own first`);
+    assert.equal(writes.join(""), expected);
   });
 }
 

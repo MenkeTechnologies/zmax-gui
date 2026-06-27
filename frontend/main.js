@@ -17,6 +17,8 @@
         { label: T("zemacs.shell.restart_editor", "Restart editor"), run: restart },
         { label: T("zemacs.shell.focus_editor", "Focus editor"), run: function () { var c = document.getElementById("terminalContainer"); if (c) { var ta = c.querySelector("textarea"); if (ta) ta.focus(); } } },
       ],
+      // Extend the real Settings panel (⚙ / ⌘,) with the editor's language picker + toggles.
+      settingsExtra: function (b) { if (window.ZemacsMenu && typeof window.ZemacsMenu.settingsExtra === "function") window.ZemacsMenu.settingsExtra(b); },
     });
 
     // A fullscreen terminal pane inside shell.body — provided so zpwr-embed-terminal uses it instead
@@ -32,6 +34,9 @@
 
     // MacVim-style menu bar + Cmd-shortcuts + dialogs + drag-drop (all zgui widgets), bridged to the PTY
     if (window.ZemacsMenu && typeof window.ZemacsMenu.mount === "function") window.ZemacsMenu.mount(shell);
+
+    // Exposed so the Preferences language picker can re-render the whole UI after switching locale.
+    window.zemacsRetranslate = function () { retranslate(shell); };
 
     // show + spawn the PTY, then exec the editor over the shell once it's up
     if (typeof window.showTerminal === "function") window.showTerminal();
