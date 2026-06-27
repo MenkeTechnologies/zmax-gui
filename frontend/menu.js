@@ -24,6 +24,13 @@
   // GUI preferences (zgui-widget Preferences panel toggles these).
   var prefs = { showHidden: false };
 
+  // Translate via the shared zpwr-i18n runtime (window.t). appFmt returns the key itself when a key is
+  // missing, so we fall back to the English literal — the UI always reads, with or without i18n loaded.
+  function T(key, english) {
+    var s = (typeof window.t === "function") ? window.t(key) : null;
+    return (s && s !== key) ? s : english;
+  }
+
   // ── editor actions (the bridge table; menu items and shortcuts both call these) ─────────────────
   var act = {
     newBuffer:   function () { ex("new"); },
@@ -68,53 +75,53 @@
 
   function menus() {
     return [
-      { label: "File", items: [
-        item("New Buffer", "⌘N", act.newBuffer),
-        item("Open…", "⌘O", act.open),
+      { label: T("zemacs.menu.file", "File"), items: [
+        item(T("zemacs.file.new", "New Buffer"), "⌘N", act.newBuffer),
+        item(T("zemacs.file.open", "Open…"), "⌘O", act.open),
         SEP,
-        item("Save", "⌘S", act.save),
-        item("Save As…", "⇧⌘S", act.saveAs),
-        item("Reload", "", act.reload),
+        item(T("zemacs.file.save", "Save"), "⌘S", act.save),
+        item(T("zemacs.file.save_as", "Save As…"), "⇧⌘S", act.saveAs),
+        item(T("zemacs.file.reload", "Reload"), "", act.reload),
         SEP,
-        item("Close Buffer", "⌘W", act.closeBuffer),
-        item("Quit", "⌘Q", act.quit),
+        item(T("zemacs.file.close", "Close Buffer"), "⌘W", act.closeBuffer),
+        item(T("zemacs.file.quit", "Quit"), "⌘Q", act.quit),
       ] },
-      { label: "Edit", items: [
-        item("Undo", "⌘Z", act.undo),
-        item("Redo", "⇧⌘Z", act.redo),
+      { label: T("zemacs.menu.edit", "Edit"), items: [
+        item(T("zemacs.edit.undo", "Undo"), "⌘Z", act.undo),
+        item(T("zemacs.edit.redo", "Redo"), "⇧⌘Z", act.redo),
         SEP,
-        item("Cut", "", act.cut),
-        item("Copy", "", act.copy),
-        item("Paste", "", act.paste),
+        item(T("zemacs.edit.cut", "Cut"), "", act.cut),
+        item(T("zemacs.edit.copy", "Copy"), "", act.copy),
+        item(T("zemacs.edit.paste", "Paste"), "", act.paste),
         SEP,
-        item("Find", "⌘F", act.find),
-        item("Find Next", "⌘G", act.findNext),
-        item("Find Previous", "⇧⌘G", act.findPrev),
+        item(T("zemacs.edit.find", "Find"), "⌘F", act.find),
+        item(T("zemacs.edit.find_next", "Find Next"), "⌘G", act.findNext),
+        item(T("zemacs.edit.find_prev", "Find Previous"), "⇧⌘G", act.findPrev),
       ] },
-      { label: "View", items: [
-        item("Toggle Full Screen", "⌃⌘F", act.fullscreen),
+      { label: T("zemacs.menu.view", "View"), items: [
+        item(T("zemacs.view.fullscreen", "Toggle Full Screen"), "⌃⌘F", act.fullscreen),
         SEP,
-        item("Translucent Background", "", act.blurOn),
-        item("Opaque Background", "", act.blurOff),
+        item(T("zemacs.view.translucent", "Translucent Background"), "", act.blurOn),
+        item(T("zemacs.view.opaque", "Opaque Background"), "", act.blurOff),
         SEP,
-        item("Preferences…", "⌘,", function () { preferences(); }),
+        item(T("zemacs.view.prefs", "Preferences…"), "⌘,", function () { preferences(); }),
       ] },
-      { label: "Buffers", items: [
-        item("Next Buffer", "⌘}", act.nextBuffer),
-        item("Previous Buffer", "⌘{", act.prevBuffer),
+      { label: T("zemacs.menu.buffers", "Buffers"), items: [
+        item(T("zemacs.buffers.next", "Next Buffer"), "⌘}", act.nextBuffer),
+        item(T("zemacs.buffers.prev", "Previous Buffer"), "⌘{", act.prevBuffer),
         SEP,
-        item("Close Buffer", "⌘W", act.closeBuffer),
+        item(T("zemacs.file.close", "Close Buffer"), "⌘W", act.closeBuffer),
       ] },
-      { label: "Window", items: [
-        item("Split Horizontally", "", act.hsplit),
-        item("Split Vertically", "", act.vsplit),
+      { label: T("zemacs.menu.window", "Window"), items: [
+        item(T("zemacs.window.split_h", "Split Horizontally"), "", act.hsplit),
+        item(T("zemacs.window.split_v", "Split Vertically"), "", act.vsplit),
         SEP,
-        item("Rotate Splits", "", act.rotate),
-        item("Close Split", "", act.closeSplit),
+        item(T("zemacs.window.rotate", "Rotate Splits"), "", act.rotate),
+        item(T("zemacs.window.close_split", "Close Split"), "", act.closeSplit),
       ] },
-      { label: "Help", items: [
-        item("Search Help…", "", act.help),
-        item("Open Tutor", "", act.tutor),
+      { label: T("zemacs.menu.help", "Help"), items: [
+        item(T("zemacs.help.search", "Search Help…"), "", act.help),
+        item(T("zemacs.help.tutor", "Open Tutor"), "", act.tutor),
       ] },
     ];
   }
@@ -129,8 +136,8 @@
         out.push({ label: m.label + " ▸ " + it.label, run: it.action });
       });
     });
-    out.push({ label: "Editor ▸ Focus", run: act.focusEditor });
-    out.push({ label: "Editor ▸ Restart", run: act.restartEditor });
+    out.push({ label: "Editor ▸ " + T("zemacs.editor.focus", "Focus"), run: act.focusEditor });
+    out.push({ label: "Editor ▸ " + T("zemacs.editor.restart", "Restart"), run: act.restartEditor });
     return out;
   }
 
@@ -170,10 +177,10 @@
     bodyWrap.appendChild(treeHost);
 
     var dlg = ZGui.modal.open({
-      title: "Open File",
+      title: T("zemacs.dialog.open_title", "Open File"),
       body: bodyWrap,
       className: "zemacs-fb-modal",
-      actions: [{ label: "Cancel", close: true }],
+      actions: [{ label: T("zemacs.dialog.cancel", "Cancel"), close: true }],
     });
 
     function load(dir) {
@@ -201,7 +208,7 @@
   function saveAsDialog() {
     if (!window.ZGui || !ZGui.modal || !ZGui.modal.prompt) { act.save(); return; }
     invoke("home_dir").then(function (home) {
-      return ZGui.modal.prompt({ title: "Save As", message: "Write the current buffer to:", value: home + "/", placeholder: "/path/to/file" });
+      return ZGui.modal.prompt({ title: T("zemacs.dialog.save_as_title", "Save As"), message: T("zemacs.dialog.save_as_msg", "Write the current buffer to:"), value: home + "/", placeholder: T("zemacs.dialog.save_as_ph", "/path/to/file") });
     }).then(function (path) {
       if (path) ex("write " + q(path));
     }).catch(function () {});
@@ -209,7 +216,7 @@
 
   function helpDialog() {
     if (!window.ZGui || !ZGui.modal || !ZGui.modal.prompt) { nkeys(":help\r"); return; }
-    ZGui.modal.prompt({ title: "Search Help", message: "Topic:", placeholder: "e.g. registers" }).then(function (topic) {
+    ZGui.modal.prompt({ title: T("zemacs.dialog.help_title", "Search Help"), message: T("zemacs.dialog.help_msg", "Topic:"), placeholder: T("zemacs.dialog.help_ph", "e.g. registers") }).then(function (topic) {
       if (topic) ex("help " + topic);
     }).catch(function () {});
   }
@@ -242,27 +249,27 @@
   function preferences() {
     if (!window.ZGui || !ZGui.modal) return;
     var body = document.createElement("div"); body.className = "zemacs-prefs";
-    toggleRow(body, "Translucent background", document.body.classList.contains("zemacs-translucent"),
+    toggleRow(body, T("zemacs.prefs.translucent", "Translucent background"), document.body.classList.contains("zemacs-translucent"),
       function (on) { if (on) act.blurOn(); else act.blurOff(); });
-    toggleRow(body, "Show hidden files in Open dialog", prefs.showHidden,
+    toggleRow(body, T("zemacs.prefs.show_hidden", "Show hidden files in Open dialog"), prefs.showHidden,
       function (on) { prefs.showHidden = on; });
-    ZGui.modal.open({ title: "Preferences", body: body, small: true, actions: [{ label: "Done", primary: true, close: true }] });
+    ZGui.modal.open({ title: T("zemacs.prefs.title", "Preferences"), body: body, small: true, actions: [{ label: T("zemacs.prefs.done", "Done"), primary: true, close: true }] });
   }
 
   // ── Toolbar (ZGui.buttonBar) ────────────────────────────────────────────────────────────────────
   function toolbar(host) {
     if (!window.ZGui || !ZGui.buttonBar) return;
     var bar = ZGui.buttonBar(host, { className: "zemacs-toolbar" });
-    bar.add("⊕", "New buffer", act.newBuffer);
-    bar.add("\u{1F4C2}", "Open…", act.open);
-    bar.add("\u{1F4BE}", "Save", act.save);
+    bar.add("⊕", T("zemacs.tb.new", "New buffer"), act.newBuffer);
+    bar.add("\u{1F4C2}", T("zemacs.file.open", "Open…"), act.open);
+    bar.add("\u{1F4BE}", T("zemacs.file.save", "Save"), act.save);
     bar.sep();
-    bar.add("◀", "Previous buffer", act.prevBuffer);
-    bar.add("▶", "Next buffer", act.nextBuffer);
+    bar.add("◀", T("zemacs.buffers.prev", "Previous Buffer"), act.prevBuffer);
+    bar.add("▶", T("zemacs.buffers.next", "Next Buffer"), act.nextBuffer);
     bar.sep();
-    bar.add("\u{1F50D}", "Find", act.find);
-    bar.add("▃", "Split horizontally", act.hsplit);
-    bar.add("⛶", "Toggle full screen", act.fullscreen);
+    bar.add("\u{1F50D}", T("zemacs.edit.find", "Find"), act.find);
+    bar.add("▃", T("zemacs.tb.split_h", "Split horizontally"), act.hsplit);
+    bar.add("⛶", T("zemacs.view.fullscreen", "Toggle Full Screen"), act.fullscreen);
   }
 
   // ── Editor right-click context menu (ZGui.contextMenu) ───────────────────────────────────────────
@@ -272,13 +279,13 @@
     if (!pane) return;
     ZGui.contextMenu.bind(pane, function () {
       return [
-        { label: "Copy", action: act.copy },
-        { label: "Paste", action: act.paste },
+        { label: T("zemacs.edit.copy", "Copy"), action: act.copy },
+        { label: T("zemacs.edit.paste", "Paste"), action: act.paste },
         "---",
-        { label: "Open…", action: act.open },
-        { label: "Save", action: act.save },
+        { label: T("zemacs.file.open", "Open…"), action: act.open },
+        { label: T("zemacs.file.save", "Save"), action: act.save },
         "---",
-        { label: "Find", action: act.find },
+        { label: T("zemacs.edit.find", "Find"), action: act.find },
       ];
     });
   }
@@ -287,33 +294,41 @@
   function initDrop() {
     if (window.ZGui && ZGui.fileDrag && ZGui.fileDrag.initDrop) {
       ZGui.fileDrag.initDrop({
-        overlayText: "Drop to open in zemacs",
+        overlayText: T("zemacs.drop_overlay", "Drop to open in zemacs"),
         onDrop: function (paths) { (paths || []).forEach(function (p) { ex("open " + q(p)); }); },
       });
     }
   }
 
-  // ── mount ───────────────────────────────────────────────────────────────────────────────────────
-  function mount(shell) {
-    if (!window.ZGui || !ZGui.menubar) return;
-    var bar = document.createElement("div");
-    bar.id = "zemacsMenubar";
-    // Insert between the appShell bar and the terminal body so the menu sits at the top of the window.
-    if (shell && shell.body && shell.body.parentNode) shell.body.parentNode.insertBefore(bar, shell.body);
-    else document.body.insertBefore(bar, document.body.firstChild);
+  // Build (or rebuild) the menubar into `bar` from the current locale, with the stopPropagation fix:
+  // menubar opens the dropdown on a left click; that same click otherwise bubbles to ZGui.contextMenu's
+  // document-level "click outside closes" handler and shuts it instantly. Registered after menubar's own
+  // handler (same button, bubble phase), so the dropdown is already open when we stop the click.
+  function buildMenubar(bar) {
+    bar.innerHTML = "";
     ZGui.menubar(bar, menus());
-    // menubar opens the dropdown on a left click; that same click otherwise bubbles to
-    // ZGui.contextMenu's document-level "click outside closes" handler and shuts it instantly.
-    // Registered after menubar's own handler (same button, bubble phase), so the dropdown is already
-    // open when we stop the click from reaching document.
     bar.querySelectorAll(".zg-menubar-item").forEach(function (btn) {
       btn.addEventListener("click", function (e) { e.stopPropagation(); });
     });
+  }
+
+  // ── mount ───────────────────────────────────────────────────────────────────────────────────────
+  var _bar = null, _tb = null, _shell = null;
+
+  function mount(shell) {
+    if (!window.ZGui || !ZGui.menubar) return;
+    _shell = shell;
+    _bar = document.createElement("div");
+    _bar.id = "zemacsMenubar";
+    // Insert between the appShell bar and the terminal body so the menu sits at the top of the window.
+    if (shell && shell.body && shell.body.parentNode) shell.body.parentNode.insertBefore(_bar, shell.body);
+    else document.body.insertBefore(_bar, document.body.firstChild);
+    buildMenubar(_bar);
     // Toolbar (icon buttons) directly under the menu bar.
-    var tb = document.createElement("div");
-    tb.id = "zemacsToolbar";
-    if (shell && shell.body && shell.body.parentNode) shell.body.parentNode.insertBefore(tb, shell.body);
-    toolbar(tb);
+    _tb = document.createElement("div");
+    _tb.id = "zemacsToolbar";
+    if (shell && shell.body && shell.body.parentNode) shell.body.parentNode.insertBefore(_tb, shell.body);
+    toolbar(_tb);
 
     // Populate ⌘K with every menu action (the appShell seed had only Restart/Focus).
     if (shell && typeof shell.setPaletteItems === "function") shell.setPaletteItems(paletteItems());
@@ -323,5 +338,13 @@
     initOpenIntake();
   }
 
-  window.ZemacsMenu = { mount: mount, actions: act };
+  // Re-render the locale-dependent chrome in place (called after the i18n catalog loads). Dialogs and
+  // the editor context menu read T() on open, so they need no retranslation.
+  function retranslate() {
+    if (_bar) buildMenubar(_bar);
+    if (_tb) { _tb.innerHTML = ""; toolbar(_tb); }
+    if (_shell && typeof _shell.setPaletteItems === "function") _shell.setPaletteItems(paletteItems());
+  }
+
+  window.ZemacsMenu = { mount: mount, retranslate: retranslate, actions: act };
 })();

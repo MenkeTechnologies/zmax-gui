@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "node scripts/copy-embed-terminal.mjs && tauri dev",
     "build": "node scripts/copy-embed-terminal.mjs && tauri build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "bash scripts/test.sh",
+    "test:js": "node --test frontend/menu.test.cjs",
+    "test:rust": "cargo test --manifest-path app/src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

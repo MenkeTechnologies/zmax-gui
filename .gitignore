@@ -4,6 +4,9 @@ frontend/terminal.js
 frontend/terminal.css
 frontend/xterm.js
 frontend/xterm.css
+# i18n runtime + catalogs copied from crates/zpwr-i18n by scripts/copy-i18n.mjs
+frontend/i18n.js
+frontend/i18n/
 # Bundled sidecars (stryke + zemacs binaries) staged by scripts/prepare-*-sidecar.mjs — build artifacts
 app/src-tauri/binaries/
 # Rust build artifacts

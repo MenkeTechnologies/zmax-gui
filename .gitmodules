@@ -7,3 +7,9 @@
 [submodule "crates/zemacs"]
 	path = crates/zemacs
 	url = https://github.com/MenkeTechnologies/zemacs
+[submodule "crates/zpwr-file-browser"]
+	path = crates/zpwr-file-browser
+	url = https://github.com/MenkeTechnologies/zpwr-file-browser.git
+[submodule "crates/zpwr-i18n"]
+	path = crates/zpwr-i18n
+	url = https://github.com/MenkeTechnologies/zpwr-i18n.git

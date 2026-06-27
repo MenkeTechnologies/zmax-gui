@@ -94,3 +94,43 @@ pub fn ingest(app: &AppHandle, raw: Vec<String>) {
 pub fn take_pending_opens(state: tauri::State<'_, OpenQueue>) -> Vec<String> {
     state.0.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_url_becomes_absolute_path() {
+        assert_eq!(url_to_path("file:///Users/x/y.txt").as_deref(), Some("/Users/x/y.txt"));
+    }
+
+    #[test]
+    fn textmate_style_mvim_url_extracts_inner_file() {
+        assert_eq!(
+            url_to_path("mvim://open?url=file:///a/b.txt&line=5").as_deref(),
+            Some("/a/b.txt")
+        );
+    }
+
+    #[test]
+    fn percent_escapes_are_decoded() {
+        assert_eq!(url_to_path("file:///a%20b/c%2Bd.txt").as_deref(), Some("/a b/c+d.txt"));
+    }
+
+    #[test]
+    fn bare_path_passes_through() {
+        assert_eq!(url_to_path("/plain/path").as_deref(), Some("/plain/path"));
+    }
+
+    #[test]
+    fn argv_keeps_only_existing_non_flag_files() {
+        // /etc/hosts exists on macOS + Linux CI; the flag and the missing path are dropped.
+        let argv = vec![
+            "zemacs-gui".to_string(),
+            "-v".to_string(),
+            "/etc/hosts".to_string(),
+            "/no/such/file/zzz".to_string(),
+        ];
+        assert_eq!(paths_from_argv(&argv), vec!["/etc/hosts".to_string()]);
+    }
+}

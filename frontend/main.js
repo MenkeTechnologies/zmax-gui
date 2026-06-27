@@ -3,14 +3,19 @@
 // we then `exec zemacs` so the editor replaces it and fills the window. See GUI_APP_ARCHITECTURE.md.
 (function () {
   "use strict";
+  // Translate via the shared zpwr-i18n runtime (window.t), falling back to the English literal.
+  function T(key, english) {
+    var s = (typeof window.t === "function") ? window.t(key) : null;
+    return (s && s !== key) ? s : english;
+  }
   function boot() {
     if (!window.ZGui || typeof ZGui.appShell !== "function") return;
     var shell = ZGui.appShell(document.getElementById("app"), {
-      brand: { glyph: "✎", title: "ZEMACS", subtitle: "editor" },
-      filterPlaceholder: "Filter…",
+      brand: { glyph: "✎", title: "ZEMACS", subtitle: T("zemacs.shell.subtitle", "editor") },
+      filterPlaceholder: T("zemacs.shell.filter", "Filter…"),
       palette: [
-        { label: "Restart editor", run: restart },
-        { label: "Focus editor", run: function () { var c = document.getElementById("terminalContainer"); if (c) { var ta = c.querySelector("textarea"); if (ta) ta.focus(); } } },
+        { label: T("zemacs.shell.restart_editor", "Restart editor"), run: restart },
+        { label: T("zemacs.shell.focus_editor", "Focus editor"), run: function () { var c = document.getElementById("terminalContainer"); if (c) { var ta = c.querySelector("textarea"); if (ta) ta.focus(); } } },
       ],
     });
 
@@ -31,6 +36,22 @@
     // show + spawn the PTY, then exec the editor over the shell once it's up
     if (typeof window.showTerminal === "function") window.showTerminal();
     startEditor();
+
+    // i18n: the UI above was built synchronously (English fallbacks) to preserve the #terminalPane
+    // creation timing; the locale catalog loads async, so re-translate the menu/toolbar/palette/shell
+    // strings in place once it's ready.
+    if (typeof window.loadLocale === "function") {
+      var loc = (typeof window.savedLocale === "function" && window.savedLocale()) ||
+                (typeof window.detectLocale === "function" && window.detectLocale()) || "en";
+      window.loadLocale(loc).then(function () { retranslate(shell); }, function () {});
+    }
+  }
+
+  function retranslate(shell) {
+    if (window.ZemacsMenu && typeof window.ZemacsMenu.retranslate === "function") window.ZemacsMenu.retranslate();
+    if (shell && shell.filterInput) shell.filterInput.placeholder = T("zemacs.shell.filter", "Filter…");
+    var sub = document.querySelector(".zg-shell-sub");
+    if (sub) sub.textContent = T("zemacs.shell.subtitle", "editor");
   }
 
   function tauri() { return window.__TAURI__ && window.__TAURI__.core; }
@@ -58,6 +79,7 @@
   }
 
   // Run immediately (scripts are at body end, so #app + the terminal globals already exist) — this
-  // creates #terminalPane before terminal.js's DOMContentLoaded wire, so it adopts ours.
+  // creates #terminalPane before terminal.js's DOMContentLoaded wire, so it adopts ours. i18n is
+  // applied afterward (see boot) without disturbing this timing.
   boot();
 })();
