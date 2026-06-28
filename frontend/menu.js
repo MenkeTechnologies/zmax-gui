@@ -71,6 +71,13 @@
     closeSplit: function () { nkeys("\x17q"); }, // C-w q
     rotate:     function () { nkeys("\x17w"); }, // C-w w
 
+    // Global light/dark toggle: flips the zgui-core chrome (data-theme); the colorscheme onApply
+    // hook (see mount) retheme the editor PTY to match, so the whole app switches together.
+    toggleTheme: function () {
+        var cs = window.ZGui && window.ZGui.colorscheme;
+        if (cs && cs.setLight) cs.setLight(!(cs.isLight && cs.isLight()));
+    },
+
     fullscreen: function () { invoke("toggle_fullscreen").catch(function () {}); },
     blurOn:  function () { invoke("set_blur", { on: true }).catch(function () {}); document.body.classList.add("zemacs-translucent"); },
     blurOff: function () { invoke("set_blur", { on: false }).catch(function () {}); document.body.classList.remove("zemacs-translucent"); },
@@ -173,6 +180,7 @@
     else if (k === "{" || (k === "[" && shift)) act.prevBuffer();
     else if (k === "r" && !shift && !ctrl) act.run();     // ⌘R → run current file
     else if (k === "d" && !shift && !ctrl) act.debug();   // ⌘D → debug
+    else if (k === "l" && shift) act.toggleTheme();       // ⌘⇧L → global light/dark toggle
     else handled = false;
     if (handled) { e.preventDefault(); e.stopPropagation(); }
   }
@@ -256,13 +264,16 @@
     return row;
   }
   function toggleControl(on, onChange) {
-    var btn = document.createElement("button"); btn.type = "button";
-    btn.className = "zg-shell-toggle" + (on ? " on" : ""); btn.textContent = on ? "ON" : "OFF";
-    btn.addEventListener("click", function () {
-      var n = !btn.classList.contains("on");
-      btn.classList.toggle("on", n); btn.textContent = n ? "ON" : "OFF"; onChange(n);
+    // zgui-core toggle-group (single toggle): active class reflects state, label flips ON/OFF.
+    var tg = window.ZGui.toggleGroup({
+      items: [{ id: "v", label: on ? "ON" : "OFF", active: !!on }],
+      onChange: function (id, s) {
+        var b = tg.el.querySelector(".zg-togglegroup-btn");
+        if (b) b.textContent = s ? "ON" : "OFF";
+        onChange(s);
+      },
     });
-    return btn;
+    return tg.el;
   }
   // The translated locales shipped in zpwr-i18n (code → native name), for the language picker.
   var LOCALES = [
@@ -274,22 +285,21 @@
     ["ja", "日本語"], ["ko", "한국어"], ["hi", "हिन्दी"], ["vi", "Tiếng Việt"], ["id", "Bahasa Indonesia"],
   ];
   function languageControl() {
-    var sel = document.createElement("select"); sel.className = "zemacs-lang-select";
     var cur = (typeof window.savedLocale === "function" && window.savedLocale()) ||
               (typeof window.detectLocale === "function" && window.detectLocale()) || "en";
-    LOCALES.forEach(function (l) {
-      var o = document.createElement("option"); o.value = l[0]; o.textContent = l[1];
-      if (l[0] === cur) o.selected = true;
-      sel.appendChild(o);
+    // zgui-core combobox: searchable locale picker (LOCALES are already [value,label] pairs).
+    var cb = window.ZGui.combobox({
+      options: LOCALES,
+      value: cur,
+      // Switch locale live: loadLocale persists the choice, then re-render the whole UI in place.
+      onChange: function (v) {
+        if (typeof window.loadLocale !== "function") return;
+        window.loadLocale(v).then(function () {
+          if (typeof window.zemacsRetranslate === "function") window.zemacsRetranslate();
+        }, function () {});
+      },
     });
-    // Switch locale live: loadLocale persists the choice, then re-render the whole UI in place.
-    sel.addEventListener("change", function () {
-      if (typeof window.loadLocale !== "function") return;
-      window.loadLocale(sel.value).then(function () {
-        if (typeof window.zemacsRetranslate === "function") window.zemacsRetranslate();
-      }, function () {});
-    });
-    return sel;
+    return cb.el;
   }
   // Called by the appShell Settings panel (main.js passes this as settingsExtra). Adds an editor
   // section with the language picker + the translucency / hidden-files toggles.
@@ -385,7 +395,28 @@
     editorContextMenu();
     initDrop();
     initOpenIntake();
+
+    // Unify the colorscheme: whenever the zgui-core chrome scheme changes (built-in cyberpunk
+    // scheme, custom, or the light/dark toggle), retheme the editor in the PTY to match, so the
+    // WHOLE app shares one palette instead of the chrome and editor drifting apart.
+    var cs = window.ZGui && window.ZGui.colorscheme;
+    if (cs && typeof cs.onApply === "function") cs.onApply(syncEditorTheme);
   }
+
+  // zgui-core scheme id -> editor (.toml) theme. The 8 cyberpunk schemes map 1:1 to `zgui-<id>`
+  // themes; in light mode (or for a custom scheme) we fall back to a shipped light/dark theme.
+  var ZGUI_SCHEMES = { cyberpunk: 1, midnight: 1, matrix: 1, ember: 1, arctic: 1, crimson: 1, toxic: 1, vapor: 1 };
+  function syncEditorTheme(name) {
+    var cs = window.ZGui && window.ZGui.colorscheme;
+    var light = cs && cs.isLight && cs.isLight();
+    var sName = name || (cs && localStorage.getItem("colorScheme")) || "cyberpunk";
+    var theme = ZGUI_SCHEMES[sName]
+      ? "zgui-" + sName + (light ? "-light" : "")   // per-scheme dark/light editor theme
+      : (light ? "catppuccin_latte" : null);        // custom scheme -> generic light fallback
+    if (theme) ex("theme " + theme);
+  }
+  // Boot sync: main.js calls this once the editor PTY is up so it adopts the saved scheme.
+  window.zemacsSyncTheme = syncEditorTheme;
 
   // Re-render the locale-dependent chrome in place (called after the i18n catalog loads). Dialogs and
   // the editor context menu read T() on open, so they need no retranslation.
