@@ -8,6 +8,25 @@
   "permissions": [
     "core:default",
     "core:menu:default",
-    "deep-link:default"
+    "deep-link:default",
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$APPLOG" }, { "path": "$APPLOG/**" },
+        { "path": "$APPDATA" }, { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA" }, { "path": "$APPLOCALDATA/**" },
+        { "path": "$APPCONFIG" }, { "path": "$APPCONFIG/**" }
+      ]
+    },
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [
+        { "path": "$APPLOG" }, { "path": "$APPLOG/**" },
+        { "path": "$APPDATA" }, { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA" }, { "path": "$APPLOCALDATA/**" },
+        { "path": "$APPCONFIG" }, { "path": "$APPCONFIG/**" }
+      ]
+    }
   ]
 }

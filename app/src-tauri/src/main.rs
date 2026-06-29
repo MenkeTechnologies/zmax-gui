@@ -17,6 +17,8 @@ fn main() {
             open_intake::ingest(app, open_intake::paths_from_argv(&argv));
         }))
         .plugin(tauri_plugin_deep_link::init())
+        // Opens the log file / data dir in the OS default handler (appShell Diagnostics buttons).
+        .plugin(tauri_plugin_opener::init())
         .manage(terminal::TerminalState::default())
         .manage(open_intake::OpenQueue::default())
         .invoke_handler(tauri::generate_handler![
@@ -34,6 +36,17 @@ fn main() {
             sidecar::stryke_bin_path,
         ])
         .setup(|app| {
+            // Ensure the app data + log dirs exist and seed the log file, so the appShell
+            // Diagnostics buttons (open log / log dir / data dir) always have a target.
+            {
+                use tauri::Manager;
+                if let Ok(d) = app.path().app_data_dir() { let _ = std::fs::create_dir_all(&d); }
+                if let Ok(d) = app.path().app_log_dir() {
+                    let _ = std::fs::create_dir_all(&d);
+                    let _ = std::fs::OpenOptions::new().create(true).append(true).open(d.join("zemacs.log"));
+                }
+            }
+
             // Cold launch with file args (`zemacs-gui file…`) — queue them for the frontend to drain.
             let handle = app.handle().clone();
             open_intake::ingest(&handle, open_intake::paths_from_argv(&std::env::args().collect::<Vec<_>>()));
