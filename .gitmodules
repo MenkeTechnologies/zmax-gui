@@ -13,3 +13,6 @@
 [submodule "crates/zpwr-i18n"]
 	path = crates/zpwr-i18n
 	url = https://github.com/MenkeTechnologies/zpwr-i18n.git
+[submodule "crates/zemacs-gui-core"]
+	path = crates/zemacs-gui-core
+	url = https://github.com/MenkeTechnologies/zemacs-gui-core.git

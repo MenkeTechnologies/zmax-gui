@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== JS bridge tests =="
-node --test frontend/menu.test.cjs
+node --test crates/zemacs-gui-core/webui/menu.test.cjs
 
 echo "== staging sidecars (needed to compile the Rust bin) =="
 node scripts/prepare-stryke-sidecar.mjs || true
