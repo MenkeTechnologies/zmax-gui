@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zemacs-gui — Engineering report. A thin Tauri v2 desktop host that runs the zemacs editor (a Helix fork) in an embedded PTY behind the shared zgui-core baseline: 6 Rust host modules (~489 LOC), 5 git submodules, 27 UI locales, module map, dependency footprint, test status.">
+  <meta name="description" content="zemacs-gui — Engineering report. A thin Tauri v2 desktop host that runs the zemacs editor (a Helix fork) in an embedded PTY behind the shared zgui-core baseline: 6 Rust host modules (~489 LOC), 6 git submodules, 27 UI locales, module map, dependency footprint, test status.">
   <title>zemacs-gui &mdash; Engineering Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -89,9 +89,9 @@
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-val">6</div><div class="stat-label">Rust Host Modules</div></div>
         <div class="stat-card"><div class="stat-val accent">~489</div><div class="stat-label">Rust Host LOC</div></div>
-        <div class="stat-card"><div class="stat-val">5</div><div class="stat-label">Git Submodules</div></div>
+        <div class="stat-card"><div class="stat-val">6</div><div class="stat-label">Git Submodules</div></div>
         <div class="stat-card"><div class="stat-val">27</div><div class="stat-label">UI Locales</div></div>
-        <div class="stat-card"><div class="stat-val green">7</div><div class="stat-label">Tests (2 JS + 5 Rust)</div></div>
+        <div class="stat-card"><div class="stat-val green">37</div><div class="stat-label">Tests (32 JS + 5 Rust)</div></div>
       </div>
 
       <hr class="section-rule">
@@ -118,7 +118,7 @@
       <hr class="section-rule">
 
       <h2 class="tutorial-title"><span class="step-hash">~</span>DEPENDENCY FOOTPRINT</h2>
-      <p class="tutorial-subtitle">A deliberately lean dependency set: the Tauri runtime, three Tauri plugins for MacVim-style behaviour, and the shared embedded-terminal crate. Five git submodules are vendored, and the <code>zemacs</code>/<code>stryke</code> binaries ship as Tauri <code>externalBin</code> sidecars &mdash; no PATH dependency.</p>
+      <p class="tutorial-subtitle">A deliberately lean dependency set: the Tauri runtime, three Tauri plugins for MacVim-style behaviour, and the shared embedded-terminal crate. Six git submodules are vendored, and the <code>zemacs</code>/<code>stryke</code> binaries ship as Tauri <code>externalBin</code> sidecars &mdash; no PATH dependency.</p>
       <table class="file-table">
         <thead><tr><th>Dependency</th><th>Kind</th><th>Why</th></tr></thead>
         <tbody>
@@ -133,7 +133,7 @@
         </tbody>
       </table>
       <div class="feature-grid" style="margin-top:1.2rem;">
-        <div class="feature-card"><h4>Five Vendored Submodules</h4><p><code>frontend/lib/zgui-core</code> (UI baseline), <code>crates/zpwr-embed-terminal</code> (PTY), <code>crates/zemacs</code> (the editor itself, a Helix fork), <code>crates/zpwr-file-browser</code>, and <code>crates/zpwr-i18n</code>.</p></div>
+        <div class="feature-card"><h4>Six Vendored Submodules</h4><p><code>frontend/lib/zgui-core</code> (UI baseline), <code>crates/zpwr-embed-terminal</code> (PTY), <code>crates/zemacs</code> (the editor itself, a Helix fork), <code>crates/zpwr-file-browser</code>, <code>crates/zpwr-i18n</code>, and <code>crates/zemacs-gui-core</code> (shared GUI core + webui).</p></div>
         <div class="feature-card"><h4>Self-Contained Sidecars</h4><p>The <code>zemacs</code> and <code>stryke</code> binaries are bundled as Tauri <code>externalBin</code> sidecars, so the app has no PATH dependency.</p></div>
       </div>
 
@@ -144,7 +144,7 @@
       <table class="file-table">
         <thead><tr><th>Suite</th><th class="num">Cases</th><th>What it guards</th></tr></thead>
         <tbody>
-          <tr><td>frontend/menu.test.cjs</td><td class="num">2</td><td>JS bridge tests &mdash; load <code>menu.js</code> in a <code>vm</code> context with a stubbed <code>__TAURI__</code> and assert the exact escape sequences the menu actions write into the PTY, guarding the command mapping (zemacs is a Helix fork, so buffers, not tabs).</td></tr>
+          <tr><td>crates/zemacs-gui-core/webui/menu.test.cjs</td><td class="num">32</td><td>JS bridge tests &mdash; load <code>menu.js</code> in a <code>vm</code> context with a stubbed <code>__TAURI__</code> and assert the exact escape sequences the menu actions write into the PTY, guarding the command mapping (zemacs is a Helix fork, so buffers, not tabs).</td></tr>
           <tr><td>open_intake.rs</td><td class="num">5</td><td>Rust <code>#[test]</code> cases covering the file-open intake parsing.</td></tr>
           <tr><td>e2e / UI automation</td><td class="num">0</td><td>None yet &mdash; the app is an early-stage MVP.</td></tr>
         </tbody>
