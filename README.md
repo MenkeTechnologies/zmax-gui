@@ -38,6 +38,8 @@ zemacs-gui/
 │   │                    file stats, git status/branch/diff — the project workbench backend
 │   ├─ editor_tools.rs   bookmarks, project search & replace, go-to-symbol, TODO/markers
 │   ├─ git_tools.rs      git blame, per-file history + show-commit, stage/unstage/discard, file compare
+│   ├─ git_ext.rs        git branches (list/checkout/create) + stash (save/list/pop/drop/show)
+│   ├─ text_tools.rs     file cleanup/convert, sort lines, find-definition, batch rename
 │   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
 │   └─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 ├─ crates/
@@ -58,8 +60,9 @@ zemacs-gui/
 On top of the MacVim menu surface, the app adds an IDE-style **project workbench** — all reachable
 from the **⌘K command palette** (and dedicated shortcuts). Every result is opened by driving the
 editor (`:open <path>:<line>:<col>`); the OS-side work (walking the tree, grepping, filesystem
-mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.rs` /
-`workbench_ext.rs` commands, so results are fast and the editor stays the single source of truth.
+mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.rs` / `git_ext.rs` /
+`text_tools.rs` / `workbench_ext.rs` commands, so results are fast and the editor stays the single
+source of truth.
 
 - **Quick Open** (`⌘P`) — fuzzy file finder over the project tree (VCS/build dirs pruned), boundary-
   and run-aware ranking; type to filter, `↑`/`↓`/`Enter` to open.
@@ -72,6 +75,9 @@ mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.
 - **Go to Symbol** (`⇧⌘O`) — a workspace outline picker: functions, structs/classes/enums/traits,
   types, modules, methods and Markdown headings across the tree (Rust, JS/TS, Python, Go, C/C++,
   Ruby, shell, Lua, stryke/Perl, Markdown); type to filter, `Enter` to jump.
+- **Find Definition** (`⇧⌘D`) — jump to where an *exact* symbol name is **declared** (not every
+  occurrence): reuses the Go-to-Symbol language rules to locate `fn`/`struct`/`class`/`def`/… sites
+  across the tree; type a name, `Enter` to jump.
 - **TODO / Markers** (`⇧⌘T`) — a scan for `TODO` / `FIXME` / `HACK` / `XXX` / `BUG` / `NOTE` /
   `OPTIMIZE` / `WARNING` comment markers across the tree; filter and jump to each.
 - **Bookmarks** (`⌘B`) — a persisted list of named `file:line` marks (survives restarts); add from a
@@ -81,6 +87,16 @@ mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.
 - **Project Files** (`⇧⌘E`) — a tree file manager: **New File / New Folder**, **Rename**,
   **Duplicate**, **Delete** (confirmed), and **File Info** (line/word/char/byte counts) via the
   right-click menu; click a file to open it.
+- **Batch Rename** — rename every file whose **base name** matches a find → replace rule (literal or
+  **regex** with `$1` capture refs); a live **preview** of every `from → to` (collisions flagged),
+  then **Rename All** applies it on disk (confirmed). Files stay in their directory.
+- **Sort Lines** — reorder a file's lines on disk: **reverse**, **ignore-case**, **numeric** and
+  **unique** (a sorted `uniq`) toggles, with a dry-run preview of the line-count delta; the file is
+  reloaded in the editor after apply.
+- **File Cleanup** — normalise a file: convert line endings (**LF**/**CRLF**), **trim trailing
+  whitespace**, **expand tabs → spaces** or **tabify** leading indent, and **ensure a final
+  newline**; a preview reports the changed-line count and byte delta before apply. Binary/oversized
+  files are skipped, like the search tools.
 - **Snippets** (`⇧⌘I`) — a persisted named text library; pick one to insert it into the editor via
   bracketed paste (multi-line bodies land verbatim, no auto-indent), add / remove / **Clear**.
 - **Git Changes** — the current branch + `git status` list; click a file for its unified **diff**;
@@ -92,6 +108,12 @@ mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.
   **diff it introduced** (`git show`), or open the file.
 - **Compare Files** — a unified **diff** between any two files picked from the tree
   (`git diff --no-index`, so it works outside a repo too).
+- **Git Branches** — the local branches (most-recently-committed first, current flagged); click to
+  **checkout** (confirmed), or **New Branch** to create and switch (`checkout -b`). Ref names are
+  flag-guarded.
+- **Git Stash** — the stash list; click an entry for its **patch** (`stash show -p`), **Pop**
+  (apply + drop, confirmed) or **Drop** (confirmed) per entry, and **Stash Changes** to save the
+  working tree (including untracked) with an optional message.
 - **Project Stats** — a read-only report of file / line / byte counts across the tree, broken down by
   extension (binary and oversized files skipped for line counting).
 

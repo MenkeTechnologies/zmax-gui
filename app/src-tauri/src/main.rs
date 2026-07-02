@@ -5,11 +5,13 @@
 
 mod editor_tools;
 mod fs_ops;
+mod git_ext;
 mod git_tools;
 mod open_intake;
 mod project;
 mod sidecar;
 mod terminal;
+mod text_tools;
 mod window_ops;
 mod workbench_ext;
 
@@ -76,6 +78,21 @@ fn main() {
             workbench_ext::snippet_remove,
             workbench_ext::snippet_clear,
             workbench_ext::project_stats,
+            // Git extras (panels.js): branch list / checkout / create + stash save / list / pop /
+            // drop / show.
+            git_ext::git_branches,
+            git_ext::git_checkout_branch,
+            git_ext::git_create_branch,
+            git_ext::git_stash_list,
+            git_ext::git_stash_save,
+            git_ext::git_stash_pop,
+            git_ext::git_stash_drop,
+            git_ext::git_stash_show,
+            // Text tools (panels.js): file cleanup/convert, sort lines, find definition, batch rename.
+            text_tools::convert_file,
+            text_tools::sort_file_lines,
+            text_tools::find_definition,
+            text_tools::batch_rename,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell

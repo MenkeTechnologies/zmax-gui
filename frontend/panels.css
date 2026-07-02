@@ -111,8 +111,11 @@
 .zp-rep-before { font-size: 12px; color: var(--accent, #ff2a6d); font-family: monospace; white-space: pre-wrap; word-break: break-all; }
 .zp-rep-after { font-size: 12px; color: var(--green, #39ff14); font-family: monospace; white-space: pre-wrap; word-break: break-all; }
 
-/* destructive action button (git discard) — plain colour swap, no shadows/transitions */
+/* destructive action button (git discard / stash drop) — plain colour swap, no shadows/transitions */
 .zp-danger { color: var(--accent, #ff2a6d); border-color: var(--accent, #ff2a6d); }
+
+/* batch-rename skipped-row note (destination exists / collision) */
+.zp-rename-skip { font-size: 11px; color: var(--yellow, #f9e900); font-family: monospace; }
 
 /* git blame overlay: line# · commit/date/author · summary */
 .zp-blame { min-width: 620px; }

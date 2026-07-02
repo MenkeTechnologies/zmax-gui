@@ -303,7 +303,7 @@ pub struct Symbol {
 
 /// The (kind, regex) rule set for a file, chosen by extension. Each regex must have one capture group
 /// holding the symbol name. `None` means the file type has no outline support (skipped).
-fn symbol_rules(ext: &str) -> Option<Vec<(&'static str, regex::Regex)>> {
+pub(crate) fn symbol_rules(ext: &str) -> Option<Vec<(&'static str, regex::Regex)>> {
     let rx = |p: &str| regex::Regex::new(p).unwrap();
     let rules: Vec<(&'static str, regex::Regex)> = match ext {
         "rs" => vec![
@@ -423,7 +423,7 @@ fn symbol_rules(ext: &str) -> Option<Vec<(&'static str, regex::Regex)>> {
 
 /// Extract symbols from one file's `content` using the rules for `ext`. Pure (no I/O) so it is unit
 /// tested directly. The first rule that matches a line wins (rules are ordered specific-first).
-fn extract_symbols(rel: &str, path: &str, ext: &str, content: &str) -> Vec<Symbol> {
+pub(crate) fn extract_symbols(rel: &str, path: &str, ext: &str, content: &str) -> Vec<Symbol> {
     let Some(rules) = symbol_rules(ext) else {
         return Vec::new();
     };
@@ -453,7 +453,7 @@ fn extract_symbols(rel: &str, path: &str, ext: &str, content: &str) -> Vec<Symbo
     out
 }
 
-fn ext_of(path: &Path) -> String {
+pub(crate) fn ext_of(path: &Path) -> String {
     path.extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default()
