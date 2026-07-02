@@ -17,6 +17,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Project-wide find-in-files (regex + literal search); foundational, vendorable, durable crate.
+regex = "1"
 # MacVim "open from Finder / mvim CLI / mvim:// URL" — forward a 2nd launch's files into the running
 # window (single-instance) and register the URL scheme (deep-link).
 tauri-plugin-single-instance = "2"

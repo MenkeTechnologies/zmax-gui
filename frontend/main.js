@@ -35,6 +35,10 @@
     // MacVim-style menu bar + Cmd-shortcuts + dialogs + drag-drop (all zgui widgets), bridged to the PTY
     if (window.ZemacsMenu && typeof window.ZemacsMenu.mount === "function") window.ZemacsMenu.mount(shell);
 
+    // App-local project workbench: quick-open (⌘P), find-in-files (⇧⌘J), recent (⌘E), project files
+    // (⇧⌘E) and a git panel — all in the ⌘K palette. Mounts after menu.js so its palette items append.
+    if (window.ZemacsPanels && typeof window.ZemacsPanels.mount === "function") window.ZemacsPanels.mount(shell);
+
     // Exposed so the Preferences language picker can re-render the whole UI after switching locale.
     window.zemacsRetranslate = function () { retranslate(shell); };
 

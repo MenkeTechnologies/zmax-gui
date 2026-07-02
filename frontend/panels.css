@@ -1,0 +1,102 @@
+/* zemacs-gui project-workbench panels (panels.js). App-local styling for the quick-open / find-in-files
+ * / recent / project-files / git overlays. Reuses the zgui-core cyberpunk palette vars. Plain
+ * border/background/padding only (no transitions/shadows/gradients) so it renders identically in the
+ * release WebKit bundle. */
+
+.zp-picker { display: flex; flex-direction: column; gap: 8px; min-width: 520px; }
+
+.zp-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text, #c7f9ff);
+  background: var(--bg-secondary, #0a0e14);
+  border: 1px solid var(--border, #1a1a3e);
+  border-radius: 3px;
+  outline: none;
+}
+.zp-input:focus { border-color: var(--cyan, #05d9e8); }
+
+.zp-opts { display: flex; gap: 6px; align-items: center; }
+.zp-opt {
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text-dim, #7a8ba8);
+  background: var(--bg-secondary, #0a0e14);
+  border: 1px solid var(--border, #1a1a3e);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.zp-opt.active { color: var(--bg-primary, #05050a); background: var(--cyan, #05d9e8); border-color: var(--cyan, #05d9e8); }
+
+.zp-count { font-size: 11px; color: var(--text-dim, #7a8ba8); }
+
+.zp-list { max-height: 56vh; overflow: auto; border: 1px solid var(--border, #1a1a3e); border-radius: 3px; }
+
+.zp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 9px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border, #1a1a3e);
+}
+.zp-row:last-child { border-bottom: none; }
+.zp-row:hover { background: var(--bg-card, #0d0d1a); }
+.zp-row.active { background: var(--bg-card, #0d0d1a); border-left: 3px solid var(--cyan, #05d9e8); padding-left: 6px; }
+
+.zp-row-primary { color: var(--text, #c7f9ff); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zp-row-secondary { color: var(--text-dim, #7a8ba8); font-size: 11px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+
+.zp-badge {
+  flex: none;
+  min-width: 22px;
+  text-align: center;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--bg-primary, #05050a);
+  background: var(--cyan, #05d9e8);
+  border-radius: 2px;
+}
+.zp-git-M { background: var(--yellow, #f9e900); }
+.zp-git-A { background: var(--green, #39ff14); }
+.zp-git-D { background: var(--accent, #ff2a6d); }
+.zp-git-R { background: var(--magenta, #d300c5); }
+.zp-git-\? { background: var(--text-dim, #7a8ba8); }
+
+.zp-open-btn {
+  flex: none;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--cyan, #05d9e8);
+  background: transparent;
+  border: 1px solid var(--border, #1a1a3e);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.zp-open-btn:hover { border-color: var(--cyan, #05d9e8); }
+
+.zp-stats { font-size: 13px; color: var(--text, #c7f9ff); padding: 4px 2px; min-width: 320px; }
+
+.zp-git { display: flex; flex-direction: column; gap: 8px; min-width: 560px; }
+.zp-git-head { font-family: monospace; font-size: 12px; color: var(--cyan, #05d9e8); }
+.zp-diff {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-dim, #7a8ba8);
+  background: var(--bg-secondary, #0a0e14);
+  border: 1px solid var(--border, #1a1a3e);
+  border-radius: 3px;
+  white-space: pre;
+}
+
+.zp-browser { min-width: 520px; }

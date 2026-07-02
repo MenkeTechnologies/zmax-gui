@@ -11,6 +11,8 @@
   <link rel="stylesheet" href="xterm.css">
   <link rel="stylesheet" href="terminal.css">
   <link rel="stylesheet" href="zemacs.css">
+  <!-- app-local project-workbench overlays (panels.js) -->
+  <link rel="stylesheet" href="panels.css">
 </head>
 <body>
   <!-- ZGui.appShell mounts here; the zemacs editor runs in a fullscreen terminal inside shell.body -->
@@ -55,6 +57,9 @@
 
   <!-- the MacVim GUI bridge (menu/shortcuts/dialogs → PTY); must load before main.js mounts -->
   <script src="menu.js"></script>
+
+  <!-- app-local project workbench (quick-open, find-in-files, recent, project files, git); before main.js -->
+  <script src="panels.js"></script>
 
   <!-- mount: appShell + menu bar + a fullscreen terminal that execs the zemacs editor -->
   <script src="main.js"></script>

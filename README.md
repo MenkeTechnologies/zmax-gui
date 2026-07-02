@@ -30,10 +30,12 @@ the GUI. Standard MenkeTechnologies GUI layout — see `GUI_APP_ARCHITECTURE.md`
 
 ```
 zemacs-gui/
-├─ app/src-tauri/        Tauri host: terminal + fs + window + open-intake commands
+├─ app/src-tauri/        Tauri host: terminal + fs + window + open-intake + project commands
 │   ├─ terminal.rs       PTY spawn/write/resize/kill
 │   ├─ fs_ops.rs         list_dir/home_dir — backs the Open dialog
 │   ├─ window_ops.rs     fullscreen / translucency (blur) / focus
+│   ├─ project.rs        fuzzy find-files, find-in-files (regex), tree file ops, recent files,
+│   │                    file stats, git status/branch/diff — the project workbench backend
 │   └─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 ├─ crates/
 │   ├─ zemacs            the editor — vendored submodule, built → bundled sidecar
@@ -44,8 +46,32 @@ zemacs-gui/
 └─ frontend/
    ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
    ├─ menu.js                   the MacVim GUI surface (all zgui widgets → PTY)
+   ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    └─ lib/zgui-core             the shared widget library (submodule)
 ```
+
+## Project workbench
+
+On top of the MacVim menu surface, the app adds an IDE-style **project workbench** — all reachable
+from the **⌘K command palette** (and dedicated shortcuts). Every result is opened by driving the
+editor (`:open <path>:<line>:<col>`); the OS-side work (walking the tree, grepping, filesystem
+mutations, git) lives in the Rust `project.rs` commands, so results are fast and the editor stays the
+single source of truth.
+
+- **Quick Open** (`⌘P`) — fuzzy file finder over the project tree (VCS/build dirs pruned), boundary-
+  and run-aware ranking; type to filter, `↑`/`↓`/`Enter` to open.
+- **Find in Files** (`⇧⌘J`) — project-wide text search with **regex**, **match-case** and
+  **whole-word** toggles; click a match to jump to its exact `line:col`.
+- **Recent Files** (`⌘E`) — a persisted MRU list (survives restarts; every open, from any route, is
+  recorded), filterable, with **Clear**.
+- **Project Files** (`⇧⌘E`) — a tree file manager: **New File / New Folder**, **Rename**,
+  **Duplicate**, **Delete** (confirmed), and **File Info** (line/word/char/byte counts) via the
+  right-click menu; click a file to open it.
+- **Git Changes** — the current branch + `git status` list; click a file for its unified **diff**, or
+  open it in the editor.
+
+All surfaces are modal overlays (like the Open dialog) built from zgui-core widgets — no docked pane,
+so the embedded terminal is never reflowed.
 
 ## MacVim-style GUI
 

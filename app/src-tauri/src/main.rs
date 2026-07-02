@@ -5,6 +5,7 @@
 
 mod fs_ops;
 mod open_intake;
+mod project;
 mod sidecar;
 mod terminal;
 mod window_ops;
@@ -34,6 +35,21 @@ fn main() {
             open_intake::take_pending_opens,
             sidecar::zemacs_exec_command,
             sidecar::stryke_bin_path,
+            // Project workbench (panels.js): quick-open, find-in-files, tree file ops, recent files,
+            // file stats, git.
+            project::find_files,
+            project::search_project,
+            project::create_path,
+            project::rename_path,
+            project::delete_path,
+            project::copy_path,
+            project::recent_add,
+            project::recent_list,
+            project::recent_clear,
+            project::file_stats,
+            project::git_branch,
+            project::git_status,
+            project::git_file_diff,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell
