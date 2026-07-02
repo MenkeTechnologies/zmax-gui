@@ -1,31 +1,48 @@
 #!/usr/bin/env bash
-# Build zemacs-gui and deploy the freshly built .app straight into /Applications
-# (local, unsigned install) so the change is live immediately — no .dmg drag.
+# Build zemacs-gui and FORCE-install the freshly built artifact locally:
+#   * a .app bundle  -> /Applications
+#   * a plain binary -> ~/.cargo/bin
+# Force-syncs nested submodules to their pinned commits first so the build always
+# has its inputs, then overwrites any previously installed copy. Unsigned, live now.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PRODUCT="zemacs-gui"
 
-if [ "$(uname -s)" != "Darwin" ]; then
-  echo "localinstall: macOS-only (.app bundle deploy)" >&2
-  exit 1
-fi
+echo "// force-syncing nested submodules …"
+git submodule sync --recursive >/dev/null 2>&1 || true
+git submodule update --init --recursive --force
 
 echo "// building release bundle for $PRODUCT …"
 pnpm run build
 
-# Locate the freshly built .app (Tauri bundle or JUCE Standalone); newest wins.
-BUILT="$(find . -type d -name "$PRODUCT.app" -not -path '*/node_modules/*' \
+# Prefer a .app bundle (Tauri / JUCE Standalone) -> /Applications; newest wins.
+APP="$(find . -type d -name "$PRODUCT.app" -not -path '*/node_modules/*' \
   \( -path '*/release/bundle/macos/*' -o -path '*/Release/Standalone/*' \) \
   -exec stat -f '%m %N' {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
-if [ -z "$BUILT" ] || [ ! -d "$BUILT" ]; then
-  echo "localinstall: $PRODUCT.app not found after build" >&2
-  exit 1
+
+if [ -n "$APP" ] && [ -d "$APP" ]; then
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "localinstall: .app deploy is macOS-only" >&2; exit 1
+  fi
+  DEST="/Applications/$PRODUCT.app"
+  osascript -e "quit app \"$PRODUCT\"" >/dev/null 2>&1 || true
+  sleep 1
+  [ -e "$DEST" ] && command rm -rf "$DEST"
+  command cp -fRp "$APP" "$DEST"
+  echo "localinstall: installed $APP -> $DEST ($(du -sh "$APP" | awk '{print $1}'))"
+  exit 0
 fi
 
-DEST="/Applications/$PRODUCT.app"
-osascript -e "quit app \"$PRODUCT\"" >/dev/null 2>&1 || true
-sleep 1
-[ -e "$DEST" ] && command rm -rf "$DEST"
-command cp -fRp "$BUILT" "$DEST"
-echo "localinstall: installed $BUILT -> $DEST ($(du -sh "$BUILT" | awk '{print $1}'))"
+# Fall back to a release binary -> ~/.cargo/bin.
+BIN="$(find . -type f -perm +111 -name "$PRODUCT" -path '*/release/*' \
+  -not -path '*/deps/*' -not -path '*/build/*' 2>/dev/null | head -1)"
+if [ -n "$BIN" ] && [ -f "$BIN" ]; then
+  mkdir -p "$HOME/.cargo/bin"
+  command install -m 755 "$BIN" "$HOME/.cargo/bin/$PRODUCT"
+  echo "localinstall: installed $BIN -> $HOME/.cargo/bin/$PRODUCT"
+  exit 0
+fi
+
+echo "localinstall: no $PRODUCT.app or $PRODUCT binary found after build" >&2
+exit 1
