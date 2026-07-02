@@ -9,9 +9,14 @@ cd "$(dirname "$0")/.."
 
 PRODUCT="zemacs-gui"
 
-echo "// force-syncing nested submodules …"
+echo "// force-syncing nested submodules to latest main …"
 git submodule sync --recursive >/dev/null 2>&1 || true
-git submodule update --init --recursive --force
+git submodule update --init --recursive --force >/dev/null 2>&1 || true
+# Advance every nested submodule to its latest origin/main (pinned commits can be
+# stale and miss build inputs); tolerate submodules that lack a main branch.
+git submodule foreach --recursive \
+  'git fetch -q origin main 2>/dev/null && git reset -q --hard origin/main 2>/dev/null || true' \
+  >/dev/null 2>&1 || true
 
 echo "// building release bundle for $PRODUCT …"
 pnpm run build
