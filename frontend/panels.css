@@ -110,3 +110,24 @@
 .zp-rep-loc { font-size: 11px; color: var(--text-dim, #7a8ba8); font-family: monospace; }
 .zp-rep-before { font-size: 12px; color: var(--accent, #ff2a6d); font-family: monospace; white-space: pre-wrap; word-break: break-all; }
 .zp-rep-after { font-size: 12px; color: var(--green, #39ff14); font-family: monospace; white-space: pre-wrap; word-break: break-all; }
+
+/* destructive action button (git discard) — plain colour swap, no shadows/transitions */
+.zp-danger { color: var(--accent, #ff2a6d); border-color: var(--accent, #ff2a6d); }
+
+/* git blame overlay: line# · commit/date/author · summary */
+.zp-blame { min-width: 620px; }
+.zp-blame-list { max-height: 62vh; }
+.zp-blame-row { align-items: baseline; gap: 10px; }
+.zp-blame-line { flex: none; width: 40px; text-align: right; font-family: monospace; font-size: 11px; color: var(--text-dim, #7a8ba8); }
+.zp-blame-meta { flex: none; width: 260px; font-family: monospace; font-size: 11px; color: var(--cyan, #05d9e8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zp-blame-sum { flex: 1; margin-left: 0; }
+
+/* project stats table (four columns; class-based widths so release WebKit keeps them) */
+.zp-stats-panel { display: flex; flex-direction: column; gap: 8px; min-width: 560px; }
+.zp-stats-head { font-family: monospace; font-size: 10px; color: var(--text-dim, #7a8ba8); }
+.zp-stats-row { align-items: baseline; }
+.zp-stat-col { font-size: 12px; color: var(--text, #c7f9ff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zp-stat-col-0 { flex: 1; font-family: monospace; color: var(--accent-light, #7af9ff); }
+.zp-stat-col-1 { flex: none; width: 90px; text-align: right; font-family: monospace; }
+.zp-stat-col-2 { flex: none; width: 110px; text-align: right; font-family: monospace; }
+.zp-stat-col-3 { flex: none; width: 90px; text-align: right; font-family: monospace; color: var(--text-dim, #7a8ba8); }

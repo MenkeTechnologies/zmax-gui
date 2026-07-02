@@ -5,11 +5,13 @@
 
 mod editor_tools;
 mod fs_ops;
+mod git_tools;
 mod open_intake;
 mod project;
 mod sidecar;
 mod terminal;
 mod window_ops;
+mod workbench_ext;
 
 fn main() {
     tauri::Builder::default()
@@ -59,6 +61,21 @@ fn main() {
             editor_tools::replace_project,
             editor_tools::project_symbols,
             editor_tools::scan_markers,
+            // Git tools (panels.js): per-line blame, per-file history + show-commit, stage / unstage /
+            // discard, and a two-file compare.
+            git_tools::git_blame,
+            git_tools::git_log_file,
+            git_tools::git_show,
+            git_tools::git_stage,
+            git_tools::git_unstage,
+            git_tools::git_discard,
+            git_tools::diff_files,
+            // Workbench extras (panels.js): persisted snippets + a project code-stats report.
+            workbench_ext::snippet_add,
+            workbench_ext::snippet_list,
+            workbench_ext::snippet_remove,
+            workbench_ext::snippet_clear,
+            workbench_ext::project_stats,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell

@@ -37,6 +37,8 @@ zemacs-gui/
 │   ├─ project.rs        fuzzy find-files, find-in-files (regex), tree file ops, recent files,
 │   │                    file stats, git status/branch/diff — the project workbench backend
 │   ├─ editor_tools.rs   bookmarks, project search & replace, go-to-symbol, TODO/markers
+│   ├─ git_tools.rs      git blame, per-file history + show-commit, stage/unstage/discard, file compare
+│   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
 │   └─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 ├─ crates/
 │   ├─ zemacs            the editor — vendored submodule, built → bundled sidecar
@@ -56,8 +58,8 @@ zemacs-gui/
 On top of the MacVim menu surface, the app adds an IDE-style **project workbench** — all reachable
 from the **⌘K command palette** (and dedicated shortcuts). Every result is opened by driving the
 editor (`:open <path>:<line>:<col>`); the OS-side work (walking the tree, grepping, filesystem
-mutations, git) lives in the Rust `project.rs` commands, so results are fast and the editor stays the
-single source of truth.
+mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.rs` /
+`workbench_ext.rs` commands, so results are fast and the editor stays the single source of truth.
 
 - **Quick Open** (`⌘P`) — fuzzy file finder over the project tree (VCS/build dirs pruned), boundary-
   and run-aware ranking; type to filter, `↑`/`↓`/`Enter` to open.
@@ -79,8 +81,19 @@ single source of truth.
 - **Project Files** (`⇧⌘E`) — a tree file manager: **New File / New Folder**, **Rename**,
   **Duplicate**, **Delete** (confirmed), and **File Info** (line/word/char/byte counts) via the
   right-click menu; click a file to open it.
-- **Git Changes** — the current branch + `git status` list; click a file for its unified **diff**, or
-  open it in the editor.
+- **Snippets** (`⇧⌘I`) — a persisted named text library; pick one to insert it into the editor via
+  bracketed paste (multi-line bodies land verbatim, no auto-indent), add / remove / **Clear**.
+- **Git Changes** — the current branch + `git status` list; click a file for its unified **diff**;
+  **Stage** / **Unstage** / **Discard** (confirmed) each file inline, **Refresh**, jump to **Blame**,
+  or open it in the editor.
+- **Git Blame** (`⇧⌘B`) — per-line commit / author / date for a chosen file (`git blame`
+  `--line-porcelain`); click a line to jump there.
+- **File History** — the commit log touching a file (`git log --follow`); click a commit for the
+  **diff it introduced** (`git show`), or open the file.
+- **Compare Files** — a unified **diff** between any two files picked from the tree
+  (`git diff --no-index`, so it works outside a repo too).
+- **Project Stats** — a read-only report of file / line / byte counts across the tree, broken down by
+  extension (binary and oversized files skipped for line counting).
 
 All surfaces are modal overlays (like the Open dialog) built from zgui-core widgets — no docked pane,
 so the embedded terminal is never reflowed.
