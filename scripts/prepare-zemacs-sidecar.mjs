@@ -43,15 +43,21 @@ function builtBinary() {
 function resolveZemacs() {
     const override = process.env.ZEMACS_SIDECAR_BIN || process.env.ZEMACS_BIN;
     if (override && existsSync(override)) return override;
-    let built = builtBinary();
-    if (built) return built;
     if (!existsSync(join(submodule, 'Cargo.toml'))) {
         console.error('prepare-zemacs-sidecar: crates/zemacs submodule missing — run `git submodule update --init crates/zemacs`');
         return null;
     }
-    if (process.env.ZEMACS_NO_BUILD) return null;
-    console.log('prepare-zemacs-sidecar: building crates/zemacs (cargo build --bin zemacs)…');
-    execFileSync('cargo', ['build', '--bin', 'zemacs'], { cwd: submodule, stdio: 'inherit' });
+    // Always rebuild so the sidecar tracks the current submodule source. `localinstall` force-syncs
+    // crates/zemacs to latest main, but the compiled binary from a prior commit lingers in target/ —
+    // reusing it (the old bug) bundles a STALE editor. cargo is incremental: a no-op when the source
+    // is unchanged, a real recompile when it advanced. Set ZEMACS_NO_BUILD=1 to skip and reuse.
+    if (!process.env.ZEMACS_NO_BUILD) {
+        console.log('prepare-zemacs-sidecar: building crates/zemacs (cargo build --bin zemacs)…');
+        execFileSync('cargo', ['build', '--bin', 'zemacs'], { cwd: submodule, stdio: 'inherit' });
+        // Prefer the just-built debug binary over any older release binary left in target/.
+        const dbg = join(submodule, 'target', 'debug', name);
+        if (existsSync(dbg)) return dbg;
+    }
     return builtBinary();
 }
 
