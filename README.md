@@ -160,7 +160,7 @@ itself, it drives `zemacs`). zemacs (a Helix fork) has **both** buffers and a re
 family, so the GUI drives each with its own menu — the **Buffers** menu cycles/closes open buffers,
 the **Tabs** menu manages tabpages (each holds its own split layout).
 
-- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / View / Buffers / Window / Tabs / Folds / Marks / Bookmarks / Macros / Code / Spell / Abbrev / Git / Help.
+- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / View / Buffers / Window / Tabs / Folds / Marks / Bookmarks / Macros / Snippets / Code / Spell / Abbrev / Git / Help.
 - **Search menu** — in-buffer engine commands (distinct from the file-based Find-in-Files workbench):
   whole-buffer regex Replace (`:%s`, delimiter auto-chosen so a `/` in the pattern is safe),
   case-preserving Replace (vim-abolish `:%S` — `foo/Foo/FOO` → `bar/Bar/BAR`), Count Matches
@@ -225,6 +225,9 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   re-run the last ex-command (`@{reg}` / `Q` / `@:`); the macro ring — cycle next / previous, view /
   swap / delete the head macro (`SPC K r n/p/L/s/d`); the macro counter — increment / insert-and-increment
   (`SPC K c a/c`); and save the last macro to a register (`SPC K e r`).
+- **Snippets menu** — the PTY-native snippet library bridged into the PTY (distinct from the workbench
+  Snippets panel): insert a snippet via the fuzzy picker (`:Snippets`) and open the library editor to
+  create / edit / delete snippets (`:snippets`).
 - **Toolbar** (`ZGui.buttonBar`) — new / open / save / buffer nav / find / replace / go-to-def / format / git status / list marks / replay macro / toggle fold / comment lines / list tabs / split / full screen.
 - **Command palette** (`⌘K`) — every menu action, fuzzy-searchable.
 - **Cmd-shortcuts** — ⌘S save, ⇧⌘S Save As, ⌘O open, ⌘W close buffer, ⌘N new, ⌘Z/⇧⌘Z undo/redo,
