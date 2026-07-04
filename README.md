@@ -160,7 +160,7 @@ itself, it drives `zemacs`). zemacs (a Helix fork) has **both** buffers and a re
 family, so the GUI drives each with its own menu — the **Buffers** menu cycles/closes open buffers,
 the **Tabs** menu manages tabpages (each holds its own split layout).
 
-- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / View / Buffers / Window / Tabs / Folds / Marks / Macros / Code / Spell / Abbrev / Git / Help.
+- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / View / Buffers / Window / Tabs / Folds / Marks / Macros / Code / Spell / Abbrev / Git / Help.
 - **Search menu** — in-buffer engine commands (distinct from the file-based Find-in-Files workbench):
   whole-buffer regex Replace (`:%s`, delimiter auto-chosen so a `/` in the pattern is safe),
   case-preserving Replace (vim-abolish `:%S` — `foo/Foo/FOO` → `bar/Bar/BAR`), Count Matches
@@ -171,6 +171,11 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   reverse / numeric / unique variants (`:sort-lines [--reverse|--numeric|--unique]`); sort the ranges
   in the selection (`:sort`); sort paragraphs (`:sort-paragraphs`); hard-wrap the selection to the
   configured width (`:reflow`); and reindent / dedent by a shiftwidth (`:indent-lines` / `:dedent-lines`).
+- **Extract menu** — regex extraction over the selection, bridged into the PTY: replace the selection
+  with the http(s) URLs / email addresses / IPv4 addresses / numbers / double-quoted strings it contains,
+  one per line (`:extract-urls` / `:extract-emails` / `:extract-ips` / `:extract-numbers` /
+  `:extract-quoted`); and extract every substring between a start / end delimiter pair from a prompt
+  (`:extract-between <start> <end>`, each delimiter shellword-quoted).
 - **Code menu** — language-server actions bridged into the PTY: go to definition / references /
   type definition, hover docs, peek definition, signature help, document / workspace symbol pickers
   (`SPC s j` / `SPC s S`), the refactor set — rename symbol, code action, organize imports, implement /
