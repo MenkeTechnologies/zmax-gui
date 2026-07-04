@@ -160,7 +160,7 @@ itself, it drives `zemacs`). zemacs (a Helix fork) has **both** buffers and a re
 family, so the GUI drives each with its own menu — the **Buffers** menu cycles/closes open buffers,
 the **Tabs** menu manages tabpages (each holds its own split layout).
 
-- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / View / Buffers / Window / Tabs / Folds / Marks / Macros / Code / Spell / Abbrev / Git / Help.
+- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / View / Buffers / Window / Tabs / Folds / Marks / Bookmarks / Macros / Code / Spell / Abbrev / Git / Help.
 - **Search menu** — in-buffer engine commands (distinct from the file-based Find-in-Files workbench):
   whole-buffer regex Replace (`:%s`, delimiter auto-chosen so a `/` in the pattern is safe),
   case-preserving Replace (vim-abolish `:%S` — `foo/Foo/FOO` → `bar/Bar/BAR`), Count Matches
@@ -215,6 +215,11 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   delete marks (`:mark`, `` `{x} `` goto, `:marks`, `:delmarks[!]`); jumplist back / forward
   (C-o / C-i), list / clear jumps (`:jumps`, `:clearjumps`), recent-files picker (`:oldfiles`); and
   registers show / set / clear / clear-all (`:registers`, `:set-register`, `:clear-register`).
+- **Bookmarks menu** — zemacs's persistent-bookmark family bridged into the PTY (distinct from the
+  transient marks above): JetBrains-style line bookmarks — toggle at point, next / previous, jump via a
+  picker (`SPC r t/n/N/j`); focus the Bookmarks tool window (`SPC W b`); and the emacs bookmark file I/O
+  — save / load the bookmark store to a path (`:bookmark-write` / `:bookmark-load`, via the Save-As
+  prompt and the Open file browser).
 - **Macros menu** — vim's keyboard-macro family plus the Spacemacs `SPC K` kmacro tree bridged into
   the PTY: record into a register / stop (`q{reg}` / `q`), replay a register / the last one /
   re-run the last ex-command (`@{reg}` / `Q` / `@:`); the macro ring — cycle next / previous, view /
