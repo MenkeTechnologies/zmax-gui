@@ -160,7 +160,7 @@ itself, it drives `zemacs`). zemacs (a Helix fork) has **both** buffers and a re
 family, so the GUI drives each with its own menu — the **Buffers** menu cycles/closes open buffers,
 the **Tabs** menu manages tabpages (each holds its own split layout).
 
-- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / View / Buffers / Window / Tabs / Folds / Marks / Macros / Code / Spell / Git / Help.
+- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / View / Buffers / Window / Tabs / Folds / Marks / Macros / Code / Spell / Abbrev / Git / Help.
 - **Search menu** — in-buffer engine commands (distinct from the file-based Find-in-Files workbench):
   whole-buffer regex Replace (`:%s`, delimiter auto-chosen so a `/` in the pattern is safe),
   case-preserving Replace (vim-abolish `:%S` — `foo/Foo/FOO` → `bar/Bar/BAR`), Count Matches
@@ -181,6 +181,13 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   or mark it misspelled and undo that (`zg` / `zw` / `zug`), edit the wordlists by typing words
   (`:spellwrong` / `:spellrare` / `:spellundo`), and list the known-good words / show wordlist info
   (`:spelldump` / `:spellinfo`).
+- **Abbrev menu** — vim/emacs abbreviation-table commands bridged into the PTY: list every defined
+  abbreviation (`:list-abbrevs`); define a global / both-mode / insert-mode / command-mode abbreviation
+  from a lhs + expansion prompt pair (`:define-global-abbrev`, `:abbreviate`, `:iabbrev`, `:cabbrev`);
+  remove one for both / insert / command mode (`:unabbreviate` / `:iunabbreviate` / `:cunabbreviate`);
+  expand every abbrev in the region (`:expand-region-abbrevs`); clear all (`:abclear`) or kill every
+  table (`:kill-all-abbrevs`); and load / save the table to a file (`:read-abbrev-file`, reusing the
+  Open browser / `:write-abbrev-file`, reusing the Save-As path prompt).
 - **Git menu** — zemacs-vcs actions bridged into the PTY: Magit status, stage / unstage file, line
   blame, buffer-vs-HEAD diff, next/previous/reset hunk, stash / pop, and merge-conflict resolution
   (3-pane resolve, keep ours / theirs, next conflict).
