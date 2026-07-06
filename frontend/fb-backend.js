@@ -1,8 +1,8 @@
 // fb-backend.js — wires the shared zpwr-file-browser front end (file-browser.js) into zemacs-gui.
-// Classic script, loaded BEFORE file-browser.js so the host globals it reads (window.vstUpdater +
+// Classic script, loaded BEFORE file-browser.js so the host globals it reads (window.zfbHost +
 // escapeHtml/showToast/prefs/fzfMatch/shortcutTip) exist on init.
 //
-// vstUpdater maps each method file-browser.js calls to the matching Tauri command. The fs
+// zfbHost maps each method file-browser.js calls to the matching Tauri command. The fs
 // method→command→arg lines are ported verbatim from the sibling apps (zemail/ztranslator), which took
 // them from Audio-Haxor frontend/js/ipc.js; only the fs_* commands zemacs-gui's src-tauri registers
 // (35 of them, from zpwr_file_browser::commands) are real. Because zemacs-gui IS an editor, "open a
@@ -12,7 +12,7 @@
     const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
     const reject = (name) => Promise.reject(new Error(`${name}: not available in zemacs-gui`));
 
-    window.vstUpdater = {
+    window.zfbHost = {
         // ── Registered fs_* commands (verbatim arg mapping from the sibling apps) ──
         listDirectory: (dirPath, includeHidden) => invoke('fs_list_dir', {dirPath, includeHidden: !!includeHidden}),
         fsListSubdirs: (dirPath, includeHidden) =>
