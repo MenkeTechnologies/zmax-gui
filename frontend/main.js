@@ -16,6 +16,9 @@
       palette: [
         { label: T("zemacs.shell.restart_editor", "Restart editor"), run: restart },
         { label: T("zemacs.shell.focus_editor", "Focus editor"), run: function () { var c = document.getElementById("terminalContainer"); if (c) { var ta = c.querySelector("textarea"); if (ta) ta.focus(); } } },
+        // Embedded Stryke hooks editor (zpwr-hooks-editor) — opens the in-app #hooksOverlay defined
+        // in index.html; window.openHooksEditor mounts the ZGui.hooks chooser + Monaco editor once.
+        { label: T("zemacs.shell.hooks_editor", "Hooks editor"), run: function () { if (typeof window.openHooksEditor === "function") window.openHooksEditor(); } },
       ],
       // Extend the real Settings panel (⚙ / ⌘,) with the editor's language picker + toggles.
       settingsExtra: function (b) { if (window.ZemacsMenu && typeof window.ZemacsMenu.settingsExtra === "function") window.ZemacsMenu.settingsExtra(b); },

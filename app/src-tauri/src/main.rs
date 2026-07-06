@@ -13,6 +13,7 @@ mod git_tools;
 mod open_intake;
 mod project;
 mod sidecar;
+mod stryke_lsp;
 mod terminal;
 mod text_tools;
 mod window_ops;
@@ -32,6 +33,8 @@ fn main() {
         .manage(open_intake::OpenQueue::default())
         // Shared file-browser directory watcher state (zpwr-file-browser crate).
         .manage(zpwr_file_browser::commands::watcher_state())
+        // Stryke language server bridge (Hooks editor LSP completion/hover/diagnostics).
+        .manage(stryke_lsp::StrykeLspState::default())
         .invoke_handler(tauri::generate_handler![
             terminal::terminal_spawn,
             terminal::terminal_write,
@@ -146,6 +149,13 @@ fn main() {
             zpwr_file_browser::commands::fs_open_in_editor,
             zpwr_file_browser::commands::fs_run_program,
             zpwr_file_browser::commands::fb_watcher_set,
+            // Stryke hooks-editor (zpwr-hooks-editor) — LSP bridge + hook runner. The embedded
+            // #hooksOverlay (index.html) drives these: stryke_lsp_start/_send/_stop frame LSP
+            // JSON-RPC to a `stryke --lsp` child; run_stryke_hook executes a hook's .stk script.
+            stryke_lsp::stryke_lsp_start,
+            stryke_lsp::stryke_lsp_send,
+            stryke_lsp::stryke_lsp_stop,
+            stryke_lsp::run_stryke_hook,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell

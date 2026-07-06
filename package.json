@@ -13,6 +13,13 @@
     "test:rust": "cargo test --manifest-path app/src-tauri/Cargo.toml"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "esbuild": "^0.28.1",
+    "monaco-editor": "0.55.1",
+    "monaco-emacs": "0.3.0",
+    "monaco-vim": "0.4.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

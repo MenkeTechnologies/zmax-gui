@@ -15,6 +15,8 @@
   <link rel="stylesheet" href="panels.css">
   <!-- shared multi-pane file browser (zpwr-file-browser): copied by copy-file-browser.mjs -->
   <link rel="stylesheet" href="file-browser.css">
+  <!-- embedded Stryke hooks editor (Monaco bundle from zpwr-hooks-editor): copied by copy-hooks-editor.mjs -->
+  <link rel="stylesheet" href="lib/hooks-editor.bundle.css">
   <style>
     /* Full-screen overlay chrome for the file browser (matches the sibling apps' .fb-overlay). */
     .fb-overlay { position: fixed; inset: 0; z-index: 9000; background: var(--bg, #07070d);
@@ -28,6 +30,17 @@
       padding: 4px 9px; }
     .fb-overlay-close:hover { background: rgba(5,217,232,.15); }
     .fb-overlay > #tabFiles { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+    /* Embedded Stryke hooks editor overlay — mirrors .fb-overlay. Shown by window.openHooksEditor(),
+       hidden by the close button. Hosts the ZGui.hooks chooser + Monaco editor in #zeHooksHost. */
+    .ze-hooks-overlay { position: fixed; inset: 0; z-index: 9000; background: var(--bg, #07070d);
+      display: flex; flex-direction: column; box-sizing: border-box; }
+    .ze-hooks-overlay[hidden] { display: none; }
+    .ze-hooks-bar { display: flex; align-items: center; gap: 12px;
+      padding: 6px 10px; border-bottom: 1px solid rgba(5,217,232,.25); flex: 0 0 auto; }
+    .ze-hooks-title { font-size: 13px; color: var(--cyan, #05d9e8); letter-spacing: .04em; }
+    #hooksStatus { font-size: 11px; color: var(--text-dim, #6a7a90); }
+    #hooksCloseHost { margin-left: auto; }
+    #zeHooksHost { flex: 1 1 auto; min-height: 0; overflow: hidden; }
   </style>
 </head>
 <body>
@@ -204,6 +217,18 @@
     </div>
   </div>
 
+  <!-- Embedded Stryke hooks editor overlay (⌘K → "Hooks editor"). Hidden until
+       window.openHooksEditor() shows it; the chooser + Monaco editor mount into #zeHooksHost. -->
+  <div id="hooksOverlay" class="ze-hooks-overlay" hidden>
+    <div class="ze-hooks-bar">
+      <span class="ze-hooks-title">🪝 Stryke Hooks</span>
+      <span id="hooksModeHost"></span>
+      <span id="hooksStatus"></span>
+      <span id="hooksCloseHost"></span>
+    </div>
+    <div id="zeHooksHost"></div>
+  </div>
+
   <!-- zgui-core baseline: util/fzf/icons first, then the appShell dependency set -->
   <script src="lib/zgui-core/webui/util.js"></script>
   <script src="lib/zgui-core/webui/fzf.js"></script>
@@ -260,5 +285,87 @@
 
   <!-- mount: appShell + menu bar + a fullscreen terminal that execs the zemacs editor -->
   <script src="main.js"></script>
+
+  <!-- atomic form controls (ZGui.button / ZGui.select) — the hooks overlay close button + mode
+       picker are built from these; hooks-runtime.js (ZGui.hooks) needs them too. -->
+  <script src="lib/zgui-core/webui/widgets.js"></script>
+  <!-- Embedded Stryke hooks editor: the Monaco bundle (window.HooksEditor) + the hooks core
+       (ZGui.hooks), then the wiring that publishes zemacs-gui's hook points + a stryke runner and
+       defines window.openHooksEditor to mount the chooser into the #hooksOverlay overlay — so the
+       ⌘K "Hooks editor" command opens it IN-APP (like the file browser), not a separate window. -->
+  <script src="lib/hooks-editor.bundle.js"></script>
+  <script src="lib/zgui-core/webui/hooks-runtime.js"></script>
+  <script>
+    (function () {
+      // zemacs-gui's hook points (editor lifecycle events); the core adds the global app.* hooks
+      // above these.
+      var ZEMACS_HOOKS = [
+        { id: "editor.started",   label: "Editor started",   desc: "after the zemacs PTY comes up" },
+        { id: "editor.restarted", label: "Editor restarted", desc: "after a restart-editor action" },
+        { id: "file.opened",      label: "File opened",      desc: "after a file is opened in the editor" },
+        { id: "file.saved",       label: "File saved",       desc: "after a buffer is written" },
+        { id: "project.opened",   label: "Project opened",   desc: "after a project root is set" },
+        { id: "search.run",       label: "Search run",       desc: "after a find-in-files search" },
+        { id: "git.committed",    label: "Git committed",    desc: "after a commit from the git panel" },
+        { id: "terminal.spawned", label: "Terminal spawned", desc: "after the embedded terminal spawns" },
+        { id: "locale.changed",   label: "Locale changed",   desc: "after the UI language switches" },
+        { id: "app.quit",         label: "App quit",         desc: "on window close" }
+      ];
+      function runStryke(script, ctx) {
+        try {
+          var T = window.__TAURI__;
+          if (T && T.core && typeof T.core.invoke === "function") {
+            return T.core.invoke("run_stryke_hook", { script: script, ctx: ctx || {} });
+          }
+        } catch (e) {}
+        return Promise.reject(new Error("stryke runner unavailable (not a Tauri host)"));
+      }
+      var _hooksInited = false;
+      window.openHooksEditor = function () {
+        var ov = document.getElementById("hooksOverlay");
+        if (!ov) return;
+        ov.hidden = false;
+        if (_hooksInited) return;   // mount + LSP once; later opens just re-show the overlay
+        _hooksInited = true;
+        var host = document.getElementById("zeHooksHost");
+        var status = document.getElementById("hooksStatus");
+        var closeHost = document.getElementById("hooksCloseHost");
+        if (closeHost && window.ZGui && typeof ZGui.button === "function") {
+          closeHost.appendChild(ZGui.button({ label: "✕", variant: "mini", onClick: function () { ov.hidden = true; } }));
+        }
+        if (!window.ZGui || !window.ZGui.hooks) { if (status) status.textContent = "hooks runtime missing"; return; }
+        (async function () {
+          window.ZGui.hooks.setHooks(ZEMACS_HOOKS);
+          window.ZGui.hooks.setRunner(runStryke);
+          // LSP must connect BEFORE the editor is created (create() sends didOpen only if connected).
+          try {
+            var T = window.__TAURI__;
+            if (T && T.core && T.event && window.HooksEditor && typeof window.HooksEditor.initClient === "function") {
+              await T.core.invoke("stryke_lsp_start");
+              await T.event.listen("stryke-lsp-rx", function (e) { try { window.HooksEditor.receive(e.payload); } catch (x) {} });
+              await T.event.listen("stryke-lsp-exit", function () { if (status) status.textContent = "LSP exited"; });
+              window.HooksEditor.initClient(function (m) { T.core.invoke("stryke_lsp_send", { message: m }).catch(function () {}); });
+              if (typeof window.HooksEditor.whenReady === "function") {
+                window.HooksEditor.whenReady().then(function (ok) { if (status) status.textContent = ok ? "LSP ready" : "LSP error"; });
+              }
+            }
+          } catch (e) { if (status) status.textContent = "LSP off: " + ((e && e.message) || e); }
+          var MODE_KEY = "zemacsHooksMode";
+          var savedMode = (function () { try { return localStorage.getItem(MODE_KEY) || "default"; } catch (e) { return "default"; } })();
+          var mounted = window.ZGui.hooks.mount(host, { ns: "zemacs", mode: savedMode });
+          var modeHost = document.getElementById("hooksModeHost");
+          if (modeHost && mounted && mounted.editor && typeof ZGui.select === "function") {
+            var sel = ZGui.select({
+              options: [["default", "Default"], ["vim", "Vim"], ["emacs", "Emacs"]],
+              value: savedMode,
+              onChange: function (v) { try { localStorage.setItem(MODE_KEY, v); } catch (e) {} mounted.editor.setMode(v); mounted.editor.focus(); },
+            });
+            sel.el.title = "Editor mode";
+            modeHost.appendChild(sel.el);
+          }
+        })();
+      };
+    })();
+  </script>
 </body>
 </html>

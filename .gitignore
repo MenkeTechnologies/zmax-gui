@@ -14,6 +14,10 @@ frontend/zemacs.css
 frontend/file-browser.js
 frontend/file-browser.css
 frontend/lib/fb-i18n/
+# Shared Monaco hooks editor bundled from crates/zpwr-hooks-editor by scripts/copy-hooks-editor.mjs
+frontend/lib/hooks-editor.bundle.js
+frontend/lib/hooks-editor.bundle.css
+frontend/lib/hooks-editor.worker.js
 # Bundled sidecars (stryke + zemacs binaries) staged by scripts/prepare-*-sidecar.mjs — build artifacts
 app/src-tauri/binaries/
 # Rust build artifacts
