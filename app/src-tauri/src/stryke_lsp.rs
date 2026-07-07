@@ -177,3 +177,27 @@ pub async fn run_stryke_hook(
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// Fork `bash -lc <cmd>` and return its exit status + captured output. Backs the shared zgui-core
+/// custom-command wizard's "bash" step (ZGui.userCommands) — a desktop app runs shell directly.
+#[tauri::command]
+pub async fn run_bash(cmd: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        let out = std::process::Command::new("bash")
+            .arg("-lc")
+            .arg(&cmd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot launch bash: {e}"))?;
+        Ok(serde_json::json!({
+            "ok": out.status.success(),
+            "code": out.status.code(),
+            "stdout": String::from_utf8_lossy(&out.stdout),
+            "stderr": String::from_utf8_lossy(&out.stderr),
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

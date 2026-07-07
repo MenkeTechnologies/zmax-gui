@@ -155,6 +155,7 @@ pub fn run() {
             stryke_lsp::stryke_lsp_send,
             stryke_lsp::stryke_lsp_stop,
             stryke_lsp::run_stryke_hook,
+            stryke_lsp::run_bash,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell
