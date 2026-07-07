@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const webui = resolve(here, "../crates/zpwr-file-browser/webui");
 const dstFrontend = resolve(here, "../frontend");
 
-for (const f of ["file-browser.js", "file-browser.css"]) {
+for (const f of ["file-browser.js", "file-browser.css", "file-browser.html"]) {
   const from = resolve(webui, f);
   if (!existsSync(from)) {
     console.error(`copy-file-browser: missing ${from} (run: git submodule update --init crates/zpwr-file-browser)`);
