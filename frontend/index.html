@@ -320,6 +320,13 @@
         } catch (e) {}
         return Promise.reject(new Error("stryke runner unavailable (not a Tauri host)"));
       }
+      // Publish zemacs-gui's hooks + runner and ARM the lifecycle NOW, at app boot (matches zcite) — boot()
+      // calls installLifecycle() so app.start + editor.*/file.*/git.*/terminal.* hooks fire at real launch.
+      // Previously setHooks/setRunner ran only when the editor opened (and setRunner no longer auto-arms the
+      // lifecycle), so no hook ever fired until then.
+      if (window.ZGui && window.ZGui.hooks && typeof window.ZGui.hooks.boot === "function") {
+        window.ZGui.hooks.boot({ ns: "zemacs", hooks: ZEMACS_HOOKS, runner: runStryke });
+      }
       var _hooksInited = false;
       window.openHooksEditor = function () {
         var ov = document.getElementById("hooksOverlay");
@@ -335,8 +342,7 @@
         }
         if (!window.ZGui || !window.ZGui.hooks) { if (status) status.textContent = "hooks runtime missing"; return; }
         (async function () {
-          window.ZGui.hooks.setHooks(ZEMACS_HOOKS);
-          window.ZGui.hooks.setRunner(runStryke);
+          // hooks + runner were already published at boot (above); openHooksEditor only wires LSP + mounts.
           // LSP must connect BEFORE the editor is created (create() sends didOpen only if connected).
           try {
             var T = window.__TAURI__;
