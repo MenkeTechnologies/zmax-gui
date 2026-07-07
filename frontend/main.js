@@ -49,17 +49,6 @@
     if (typeof window.showTerminal === "function") window.showTerminal();
     startEditor();
 
-    // #terminalPane IS the always-on IDE here, NOT a toggleable floating popup. The appShell auto-adds
-    // a ⌘K "Terminal" command that calls window.toggleTerminalPopup() — the shared impl HIDES the pane,
-    // which in zemacs blanks the whole window (hides the IDE). Override it to keep the IDE shown and
-    // just focus it, so the command is harmless instead of destructive.
-    window.toggleTerminalPopup = function () {
-      if (typeof window.showTerminal === "function") window.showTerminal();
-      var c = document.getElementById("terminalContainer");
-      var ta = c && c.querySelector("textarea");
-      if (ta) { try { ta.focus(); } catch (e) { /* detached */ } }
-    };
-
     // i18n: the UI above was built synchronously (English fallbacks) to preserve the #terminalPane
     // creation timing; the locale catalog loads async, so re-translate the menu/toolbar/palette/shell
     // strings in place once it's ready.
