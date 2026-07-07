@@ -29,6 +29,7 @@ pub fn run() {
         // Opens the log file / data dir in the OS default handler (appShell Diagnostics buttons).
         .plugin(tauri_plugin_opener::init())
         .manage(terminal::TerminalState::default())
+        .manage(terminal::ShellTermState::default())
         .manage(open_intake::OpenQueue::default())
         // Shared file-browser directory watcher state (zpwr-file-browser crate).
         .manage(zpwr_file_browser::commands::watcher_state())
@@ -39,6 +40,10 @@ pub fn run() {
             terminal::terminal_write,
             terminal::terminal_resize,
             terminal::terminal_kill,
+            terminal::shell_term_spawn,
+            terminal::shell_term_write,
+            terminal::shell_term_resize,
+            terminal::shell_term_kill,
             fs_ops::list_dir,
             fs_ops::home_dir,
             window_ops::toggle_fullscreen,

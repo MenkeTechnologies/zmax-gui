@@ -49,6 +49,49 @@
     if (typeof window.showTerminal === "function") window.showTerminal();
     startEditor();
 
+    // ── Floating shell terminal (⌘K "Terminal") ──
+    // #terminalPane is the always-on IDE. The appShell's "Terminal" command calls
+    // window.toggleTerminalPopup — point it at a SEPARATE floating shell that pops up ON TOP of the IDE.
+    // It's an independent PTY (shell_term_* commands / shell-term-output event), so it never disturbs the
+    // editor's terminal_* PTY. Reuses the shared .terminal-pane chrome + the bundled xterm.
+    (function () {
+      var T = window.__TAURI__;
+      if (!T || !T.core || !T.event || typeof window.Terminal !== "function") return;
+      var pane = null, term = null, spawned = false, listening = false;
+      function ensure() {
+        if (pane) return;
+        pane = document.createElement("div");
+        pane.className = "terminal-pane zshell-float";
+        pane.style.cssText = "top:auto;left:auto;right:24px;bottom:24px;";
+        var head = document.createElement("div");
+        head.className = "term-toolbar";
+        head.innerHTML = '<span class="term-toolbar-title">shell</span>' +
+          '<div class="term-toolbar-actions">' +
+          '<button class="term-btn" data-a="hide" title="Hide">—</button>' +
+          '<button class="term-btn term-btn-close" data-a="close" title="Close">✕</button></div>';
+        var body = document.createElement("div");
+        body.className = "term-body";
+        pane.append(head, body);
+        document.body.appendChild(pane);
+        head.addEventListener("click", function (e) {
+          var a = e.target && e.target.getAttribute && e.target.getAttribute("data-a");
+          if (a === "hide") { pane.classList.remove("active"); }
+          else if (a === "close") { try { T.core.invoke("shell_term_kill"); } catch (x) {} spawned = false; pane.classList.remove("active"); }
+        });
+        term = new window.Terminal({ fontFamily: "'Hack Nerd Font', Menlo, monospace", fontSize: 13, cursorBlink: true, theme: { background: "rgba(0,0,0,0)" } });
+        term.open(body);
+        term.onData(function (d) { try { T.core.invoke("shell_term_write", { data: d }); } catch (x) {} });
+        if (!listening) { listening = true; T.event.listen("shell-term-output", function (ev) { if (term) term.write(ev.payload); }); }
+      }
+      window.toggleTerminalPopup = function () {
+        ensure();
+        if (pane.classList.contains("active")) { pane.classList.remove("active"); return; }
+        pane.classList.add("active");
+        if (!spawned) { spawned = true; T.core.invoke("shell_term_spawn", { rows: term.rows || 24, cols: term.cols || 80 }).catch(function () {}); }
+        setTimeout(function () { try { term.focus(); } catch (x) {} }, 40);
+      };
+    })();
+
     // i18n: the UI above was built synchronously (English fallbacks) to preserve the #terminalPane
     // creation timing; the locale catalog loads async, so re-translate the menu/toolbar/palette/shell
     // strings in place once it's ready.

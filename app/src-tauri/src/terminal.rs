@@ -52,3 +52,56 @@ pub fn terminal_kill(state: State<'_, TerminalState>) -> Result<(), String> {
     state.session.kill();
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Second, INDEPENDENT PTY: the floating shell terminal the user pops open on top of the IDE (⌘K
+// "Terminal"). It runs a plain login shell — NOT `zemacs --ide` — so it's a real scratch terminal,
+// separate from the editor's PTY above. Its own state + `shell-term-output`/`shell-term-exit` events.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Managed state for the floating shell terminal (independent of the IDE's [`TerminalState`]).
+#[derive(Default)]
+pub struct ShellTermState {
+    session: TerminalSession,
+}
+
+/// Spawn (or respawn) the floating shell terminal's login shell.
+#[tauri::command]
+pub async fn shell_term_spawn(
+    rows: Option<u16>,
+    cols: Option<u16>,
+    app: AppHandle,
+    state: State<'_, ShellTermState>,
+) -> Result<(), String> {
+    let app_out = app.clone();
+    let app_exit = app;
+    state.session.spawn(
+        rows.unwrap_or(24),
+        cols.unwrap_or(80),
+        move |text| {
+            let _ = app_out.emit("shell-term-output", text);
+        },
+        move || {
+            let _ = app_exit.emit("shell-term-exit", ());
+        },
+    )
+}
+
+/// Write raw bytes into the floating shell terminal's PTY.
+#[tauri::command]
+pub fn shell_term_write(data: String, state: State<'_, ShellTermState>) -> Result<(), String> {
+    state.session.write(&data)
+}
+
+/// Notify the floating shell terminal's PTY of a viewport resize.
+#[tauri::command]
+pub fn shell_term_resize(rows: u16, cols: u16, state: State<'_, ShellTermState>) -> Result<(), String> {
+    state.session.resize(rows, cols)
+}
+
+/// Kill the floating shell terminal session.
+#[tauri::command]
+pub fn shell_term_kill(state: State<'_, ShellTermState>) -> Result<(), String> {
+    state.session.kill();
+    Ok(())
+}
