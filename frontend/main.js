@@ -90,6 +90,19 @@
         if (!spawned) { spawned = true; T.core.invoke("shell_term_spawn", { rows: term.rows || 24, cols: term.cols || 80 }).catch(function () {}); }
         setTimeout(function () { try { term.focus(); } catch (x) {} }, 40);
       };
+
+      // The floating shell (.zshell-float, z-index 9998) is a fixed child of <body>, so it renders ABOVE
+      // the full-screen hooks/file-browser overlays (z-index 9000). Hide it whenever either overlay opens
+      // — watch their `hidden` attribute and drop the pane's .active when an overlay becomes visible.
+      // Re-show is manual (⌘K "Terminal"), so we only hide, never auto-restore.
+      function hideFloatTerm() { if (pane && pane.classList.contains("active")) pane.classList.remove("active"); }
+      if (typeof MutationObserver === "function") {
+        ["hooksOverlay", "fbOverlay"].forEach(function (id) {
+          var ov = document.getElementById(id);
+          if (!ov) return;
+          new MutationObserver(function () { if (!ov.hidden) hideFloatTerm(); }).observe(ov, { attributes: true, attributeFilter: ["hidden"] });
+        });
+      }
     })();
 
     // i18n: the UI above was built synchronously (English fallbacks) to preserve the #terminalPane
