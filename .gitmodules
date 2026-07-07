@@ -16,3 +16,6 @@
 [submodule "crates/zpwr-hooks-editor"]
 	path = crates/zpwr-hooks-editor
 	url = https://github.com/MenkeTechnologies/zpwr-hooks-editor.git
+[submodule "crates/zgui-core"]
+	path = crates/zgui-core
+	url = https://github.com/MenkeTechnologies/zgui-core.git

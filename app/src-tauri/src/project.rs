@@ -370,7 +370,8 @@ fn recent_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     use tauri::Manager;
     let dir = app.path().app_data_dir().ok()?;
     let _ = fs::create_dir_all(&dir);
-    Some(dir.join("recent-files.json"))
+    // Already the APP DATA dir; routed through the shared helper for a single resolution path.
+    Some(zgui_shell::store_path(Some(dir.clone()), dir.join("recent-files.json"), "recent-files.json"))
 }
 
 fn read_recent(app: &tauri::AppHandle) -> Vec<String> {
