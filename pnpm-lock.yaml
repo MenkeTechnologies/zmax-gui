@@ -24,8 +24,8 @@ importers:
         specifier: 0.4.4
         version: 0.4.4(monaco-editor@0.55.1)
       zgui-core:
-        specifier: github:MenkeTechnologies/zgui-core#bb63f5971c6851b487be091f957521bf199c7242
-        version: git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#bb63f5971c6851b487be091f957521bf199c7242
+        specifier: github:MenkeTechnologies/zgui-core#v1.0.48
+        version: git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#e77af8872bbd6b3eaab2cfc65314285f000c3f3f
 
 packages:
 
@@ -296,9 +296,9 @@ packages:
     peerDependencies:
       monaco-editor: '*'
 
-  zgui-core@git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#bb63f5971c6851b487be091f957521bf199c7242:
-    resolution: {commit: bb63f5971c6851b487be091f957521bf199c7242, repo: git@github.com:MenkeTechnologies/zgui-core.git, type: git}
-    version: 1.0.45
+  zgui-core@git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#e77af8872bbd6b3eaab2cfc65314285f000c3f3f:
+    resolution: {commit: e77af8872bbd6b3eaab2cfc65314285f000c3f3f, repo: git@github.com:MenkeTechnologies/zgui-core.git, type: git}
+    version: 1.0.46
 
 snapshots:
 
@@ -484,4 +484,4 @@ snapshots:
     dependencies:
       monaco-editor: 0.55.1
 
-  zgui-core@git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#bb63f5971c6851b487be091f957521bf199c7242: {}
+  zgui-core@git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#e77af8872bbd6b3eaab2cfc65314285f000c3f3f: {}
