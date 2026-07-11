@@ -157,6 +157,8 @@ pub async fn run_stryke_hook(
         let mut child = Command::new(resolve_stryke())
             .arg("run")
             .arg(&path)
+            // Bus identity: lets `App::here()` in the hook resolve to this app's socket.
+            .env("ZGUI_APP", "zemacs-gui")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

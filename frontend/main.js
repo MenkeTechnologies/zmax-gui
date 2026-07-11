@@ -19,6 +19,8 @@
         // Embedded Stryke hooks editor (zpwr-hooks-editor) — opens the in-app #hooksOverlay defined
         // in index.html; window.openHooksEditor mounts the ZGui.hooks chooser + Monaco editor once.
         { label: T("zemacs.shell.hooks_editor", "Hooks editor"), run: function () { if (typeof window.openHooksEditor === "function") window.openHooksEditor(); } },
+        // Tmux tiling (ZGui.tmux) — opens the overlay; C-b is the prefix (C-b c new window, %/" split).
+        { label: T("zemacs.shell.tmux", "Tmux"), run: function () { if (window.ZGui && ZGui.tmux && typeof ZGui.tmux.open === "function") ZGui.tmux.open(); } },
       ],
       // Extend the real Settings panel (⚙ / ⌘,) with the editor's language picker + toggles.
       settingsExtra: function (b) { if (window.ZemacsMenu && typeof window.ZemacsMenu.settingsExtra === "function") window.ZemacsMenu.settingsExtra(b); },
