@@ -44,6 +44,13 @@
     // (⇧⌘E) and a git panel — all in the ⌘K palette. Mounts after menu.js so its palette items append.
     if (window.ZemacsPanels && typeof window.ZemacsPanels.mount === "function") window.ZemacsPanels.mount(shell);
 
+    // Install the automation-bus webview dispatcher (window.__zguiBridgeDispatch + emit forwarding) so
+    // the native bus (bus.rs) can forward App::here()->verbs() into ZGui.automation — WITHOUT this the
+    // GUI Scripts "Actions" browser gets an empty surface. Default reply/event command names match bus.rs.
+    if (window.ZGui && ZGui.automationHost && typeof ZGui.automationHost.install === "function") {
+      try { ZGui.automationHost.install(); } catch (e) { /* automation optional */ }
+    }
+
     // Exposed so the Preferences language picker can re-render the whole UI after switching locale.
     window.zemacsRetranslate = function () { retranslate(shell); };
 
