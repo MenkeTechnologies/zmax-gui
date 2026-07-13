@@ -229,6 +229,7 @@ pub fn run() {
             bus::zgui_bridge_reply,
             bus::zgui_bridge_event,
             bus::zgui_reveal_scripts,
+            zgui_shell::tauri_prefs::zgui_write_scripts,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell
