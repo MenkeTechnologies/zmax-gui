@@ -3,7 +3,7 @@
 	url = https://github.com/MenkeTechnologies/zpwr-embed-terminal
 [submodule "crates/zemacs"]
 	path = crates/zemacs
-	url = https://github.com/MenkeTechnologies/zemacs
+	url = https://github.com/MenkeTechnologies/zmax
 [submodule "crates/zpwr-file-browser"]
 	path = crates/zpwr-file-browser
 	url = https://github.com/MenkeTechnologies/zpwr-file-browser.git
@@ -12,7 +12,7 @@
 	url = https://github.com/MenkeTechnologies/zpwr-i18n.git
 [submodule "crates/zemacs-gui-core"]
 	path = crates/zemacs-gui-core
-	url = https://github.com/MenkeTechnologies/zemacs-gui-core.git
+	url = https://github.com/MenkeTechnologies/zmax-gui-core.git
 [submodule "crates/zpwr-hooks-editor"]
 	path = crates/zpwr-hooks-editor
 	url = https://github.com/MenkeTechnologies/zpwr-hooks-editor.git
