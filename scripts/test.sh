@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== JS bridge tests =="
-node --test crates/zemacs-gui-core/webui/menu.test.cjs
+node --test crates/zmax-gui-core/webui/menu.test.cjs
 
 echo "== staging sidecars (needed to compile the Rust bin) =="
 node scripts/prepare-stryke-sidecar.mjs || true
@@ -18,5 +18,5 @@ if [ -f "app/src-tauri/binaries/zmax-${triple}" ] && [ -f "app/src-tauri/binarie
     echo "== Rust unit tests =="
     cargo test --manifest-path app/src-tauri/Cargo.toml
 else
-    echo "== Rust unit tests SKIPPED: sidecars not staged for ${triple} (build crates/zemacs + stage stryke to enable) =="
+    echo "== Rust unit tests SKIPPED: sidecars not staged for ${triple} (build crates/zmax + stage stryke to enable) =="
 fi

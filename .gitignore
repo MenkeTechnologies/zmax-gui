@@ -7,7 +7,7 @@ frontend/xterm.css
 # i18n runtime + catalogs copied from crates/zpwr-i18n by scripts/copy-i18n.mjs
 frontend/i18n.js
 frontend/i18n/
-# GUI surface copied from crates/zemacs-gui-core/webui by scripts/copy-webui.mjs (single source)
+# GUI surface copied from crates/zmax-gui-core/webui by scripts/copy-webui.mjs (single source)
 frontend/menu.js
 frontend/zmax.css
 # Shared file browser copied from crates/zpwr-file-browser by scripts/copy-file-browser.mjs

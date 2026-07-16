@@ -273,7 +273,7 @@ it never depends on either being on the user's `PATH`. Before each dev/build,
 launched by absolute path, with `STRYKE_BIN` exported to the bundled stryke. The staged binaries are
 gitignored build artifacts.
 
-- **zmax** — vendored as the **`crates/zemacs` submodule** and built by the prep script
+- **zmax** — vendored as the **`crates/zmax` submodule** and built by the prep script
   (`cargo build --bin zmax`); override with `ZMAX_SIDECAR_BIN`.
 - **stryke** — pulled from the **latest [strykelang](https://github.com/MenkeTechnologies/strykelang)
   GitHub release** for the host triple (cached by release tag); falls back to a local stryke offline;
@@ -287,7 +287,7 @@ pnpm install
 pnpm tauri dev      # or: pnpm tauri build
 ```
 
-The first run builds `crates/zemacs` (Helix-fork workspace — a few minutes) and downloads the stryke
+The first run builds `crates/zmax` (Helix-fork workspace — a few minutes) and downloads the stryke
 release; both are cached afterward.
 
 ## Releases

@@ -1,8 +1,8 @@
 [submodule "crates/zpwr-embed-terminal"]
 	path = crates/zpwr-embed-terminal
 	url = https://github.com/MenkeTechnologies/zpwr-embed-terminal
-[submodule "crates/zemacs"]
-	path = crates/zemacs
+[submodule "crates/zmax"]
+	path = crates/zmax
 	url = https://github.com/MenkeTechnologies/zmax
 [submodule "crates/zpwr-file-browser"]
 	path = crates/zpwr-file-browser
@@ -10,8 +10,8 @@
 [submodule "crates/zpwr-i18n"]
 	path = crates/zpwr-i18n
 	url = https://github.com/MenkeTechnologies/zpwr-i18n.git
-[submodule "crates/zemacs-gui-core"]
-	path = crates/zemacs-gui-core
+[submodule "crates/zmax-gui-core"]
+	path = crates/zmax-gui-core
 	url = https://github.com/MenkeTechnologies/zmax-gui-core.git
 [submodule "crates/zpwr-hooks-editor"]
 	path = crates/zpwr-hooks-editor
