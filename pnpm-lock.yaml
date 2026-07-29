@@ -24,7 +24,7 @@ importers:
         specifier: 0.4.4
         version: 0.4.4(monaco-editor@0.55.1)
       zgui-core:
-        specifier: github:MenkeTechnologies/zgui-core#31c1910b1e1e702f3385a88e63c0a7c8a6903e7a
+        specifier: github:MenkeTechnologies/zgui-core#v1.0.54
         version: git+ssh://git@github.com/MenkeTechnologies/zgui-core.git#31c1910b1e1e702f3385a88e63c0a7c8a6903e7a
 
 packages:
