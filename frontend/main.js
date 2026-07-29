@@ -11,7 +11,7 @@
   function boot() {
     if (!window.ZGui || typeof ZGui.appShell !== "function") return;
     var shell = ZGui.appShell(document.getElementById("app"), {
-      brand: { glyph: "✎", title: "ZMAX", subtitle: T("zmax.shell.subtitle", "editor") },
+      brand: { branch: "app", title: "ZMAX", subtitle: T("zmax.shell.subtitle", "editor") },
       filterPlaceholder: T("zmax.shell.filter", "Filter…"),
       palette: [
         { label: T("zmax.shell.restart_editor", "Restart editor"), run: restart },
