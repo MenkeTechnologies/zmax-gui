@@ -18,6 +18,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Licence gate, shared by the paid suite. `licence` is OFF by default:
+# a plain build never checks anything, so local development is unaffected.
+account-client = { git = "https://github.com/MenkeTechnologies/zpwr-account.git", features = ["tauri"] }
+
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -70,3 +74,7 @@ window-vibrancy = "0.6"
 # Register ApplePressAndHoldEnabled=NO at startup so holding a key REPEATS it (editor
 # behaviour) instead of popping macOS's accent-character menu on the xterm textarea.
 objc2 = "0.6"
+
+[features]
+# Off by default. A release build turns it on; nothing else changes.
+licence = []

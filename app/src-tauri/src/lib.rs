@@ -96,7 +96,16 @@ pub fn run() {
         .manage(std::sync::Mutex::new(SysMon::default()))
         // GUI Automation Bus: per-request reply channels for webview-forwarded verbs (bus::forward).
         .manage(bus::pending_state())
+        // Licence gate (account-client). Disabled unless this app is built with
+        // its `licence` feature, which is off — a plain build checks nothing.
+        .manage(
+            account_client::tauri_plugin::Licensing::new("zmax-gui", 1)
+                .enforce(cfg!(feature = "licence")),
+        )
         .invoke_handler(tauri::generate_handler![
+            account_client::tauri_plugin::licence_status,
+            account_client::tauri_plugin::licence_sign_in,
+            account_client::tauri_plugin::licence_sign_out,
             sys_stats,
             terminal::terminal_spawn,
             terminal::terminal_write,
