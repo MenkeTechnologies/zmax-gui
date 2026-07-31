@@ -1,6 +1,6 @@
 {
   "name": "zmax-gui",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "private": true,
   "description": "zmax-gui — desktop GUI wrapper around the zmax editor (Helix fork). Runs the zmax binary in an embedded PTY terminal with the shared zgui-core baseline.",
   "scripts": {
@@ -19,7 +19,7 @@
     "monaco-editor": "0.55.1",
     "monaco-emacs": "0.3.0",
     "monaco-vim": "0.4.4",
-    "zgui-core": "github:MenkeTechnologies/zgui-core#v1.0.54"
+    "zgui-core": "github:MenkeTechnologies/zgui-core#75b2a58625a5e01e7a6bddaae0a748b4791685d3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

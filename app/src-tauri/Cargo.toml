@@ -4,7 +4,7 @@
 
 [package]
 name = "zmax-gui"
-version = "0.2.12"
+version = "0.2.13"
 edition = "2021"
 description = "zmax-gui — desktop GUI wrapper around the zmax editor (Helix fork), Tauri v2 + zgui baseline"
 license = "UNLICENSED"
