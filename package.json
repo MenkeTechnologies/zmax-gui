@@ -1,6 +1,6 @@
 {
   "name": "zmax-gui",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "private": true,
   "description": "zmax-gui — desktop GUI wrapper around the zmax editor (Helix fork). Runs the zmax binary in an embedded PTY terminal with the shared zgui-core baseline.",
   "scripts": {
