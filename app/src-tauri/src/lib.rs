@@ -3,6 +3,7 @@
 // MacVim-style GUI helpers (fs/window/open-intake), and wires the PTY's output/exit to the webview.
 
 mod bus;
+mod commands;
 mod doc_blame;
 mod doc_search;
 mod edit_ops;

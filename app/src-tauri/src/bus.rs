@@ -2,16 +2,29 @@
 //! `zgui-bridge` Unix socket so a stryke script can drive the whole app by name —
 //! `App::open("zmax-gui")->call(...)`, or `App::here()` from a hook running inside the app.
 //!
-//! EVERY verb/state/`verbs()` query is forwarded to the webview's `ZGui.automation` surface (the
-//! appShell actions + the zmax menu flattened into ⌘K) via the automation-host.js dispatcher, which
-//! runs the registered verb and reports back through `zgui_bridge_reply`. So the entire appShell
-//! surface is what a script sees.
+//! HYBRID handler, over two routes:
+//!   * Host commands ([`crate::commands::COMMANDS`] — the app's own `#[tauri::command]` surface:
+//!     project + document search/replace, blame, git, text/editor tools, file browser, terminal)
+//!     are dispatched by name through the host's own IPC, so a script reaches exactly what the UI
+//!     reaches, with the same argument deserialization and the same process state.
+//!   * Everything else (`appshell.*`, the zmax menu, any `ZGui.automation`-registered verb) goes to
+//!     the webview's automation-host.js dispatcher.
 //!
-//! Note that "zmax-gui hosts no engine" is no longer true of the binary either: `zoffice-core` and
-//! `zpdf-core` link in as rlibs to back the document search/replace commands in `doc_search`. They
-//! are deliberately *not* exposed as host-side bus verbs — the bus contract stays "one surface, the
-//! webview's" so a script sees a single verb namespace rather than two that can drift. Registering
-//! host-side verbs for the document commands is a live option; it just has not been taken.
+//! Both routes come back through `zgui_bridge_reply`, which fulfils a per-request channel.
+//!
+//! Why the host route is not a direct Rust call: zmax-gui has no engine crate with a generic
+//! `invoke(cmd, args)` — `zmax-gui-core` ships only the webui, and the host's surface is 100+
+//! individually typed `#[tauri::command]` functions, nine of them async. Re-deriving their argument
+//! marshalling in this file would duplicate what `generate_handler!` already does and would drift
+//! from it silently. Dispatching by name through the same handler keeps one implementation.
+//!
+//! `zoffice-core` and `zpdf-core` link in as rlibs to back the document commands in `doc_search`.
+//! Their own command surfaces (`zoffice_core::commands`, `zpdf_core::commands`) stay *off* this bus,
+//! unchanged and deliberately: zmax-gui uses those crates as libraries inside its walker, not as
+//! managed engines, so a bus call would run against an ad-hoc engine with no relation to the
+//! editor's open buffers; and `zpdf-core` is built with `default-features = false`, which leaves its
+//! `zpdf_invoke` dispatch (behind the `tauri` feature) out of the binary entirely. Those verbs are
+//! scriptable at their own apps' buses (`App::open("zoffice")`, `App::open("zpdf")`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,8 +38,13 @@ use zgui_bridge::{serve, Bridge, Handler};
 
 static BRIDGE: OnceLock<Arc<Bridge>> = OnceLock::new();
 
-/// Per-request reply channels for webview-forwarded calls, keyed by request id.
+/// Per-request reply channels for forwarded calls, keyed by request id.
 type Pending = Arc<Mutex<HashMap<u64, Sender<Result<Value, String>>>>>;
+
+/// Is `cmd` a host command (dispatched through the app's own IPC) vs an automation verb?
+fn is_host_cmd(cmd: &str) -> bool {
+    crate::commands::COMMANDS.contains(&cmd)
+}
 
 struct ZmaxBus {
     app: AppHandle,
@@ -35,9 +53,9 @@ struct ZmaxBus {
 }
 
 impl ZmaxBus {
-    /// Forward one request to the webview's `ZGui.automation` (via automation-host.js) and block the
-    /// socket thread until `zgui_bridge_reply` fulfills it (or a timeout). `kind` is "call"|"get"|"verbs".
-    fn forward(&self, kind: &str, name: &str, args: Value) -> Result<Value, String> {
+    /// Register a pending request and run `js`, which must eventually call `zgui_bridge_reply` with
+    /// the id this returns. Blocks the socket thread until the reply lands (or a timeout).
+    fn dispatch(&self, make_js: impl FnOnce(u64) -> String) -> Result<Value, String> {
         let win = self
             .app
             .get_webview_window("main")
@@ -45,13 +63,7 @@ impl ZmaxBus {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        let js = format!(
-            "window.__zguiBridgeDispatch&&window.__zguiBridgeDispatch({id},{kind},{name},{args})",
-            kind = serde_json::to_string(kind).unwrap_or_else(|_| "\"call\"".into()),
-            name = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".into()),
-            args = args,
-        );
-        if let Err(e) = win.eval(&js) {
+        if let Err(e) = win.eval(&make_js(id)) {
             self.pending.lock().unwrap().remove(&id);
             return Err(format!("eval failed: {e}"));
         }
@@ -61,22 +73,76 @@ impl ZmaxBus {
         self.pending.lock().unwrap().remove(&id);
         out?
     }
+
+    /// Run one host `#[tauri::command]` by name through the app's own invoke handler — the same
+    /// path the UI takes, so arguments deserialize with the command's real signature and async
+    /// commands are awaited. `args` is the command's argument object.
+    fn host_invoke(&self, cmd: &str, args: Value) -> Result<Value, String> {
+        if !is_host_cmd(cmd) {
+            return Err(format!("not a zmax-gui host command: {cmd}"));
+        }
+        self.dispatch(|id| {
+            format!(
+                "(function(){{var i={id},k={name},a={args};\
+                 function r(o,v,e){{window.__TAURI__.core.invoke('zgui_bridge_reply',\
+                 {{id:i,ok:o,value:v,error:e}})}}\
+                 try{{window.__TAURI__.core.invoke(k,a).then(\
+                 function(v){{r(true,v===undefined?null:v,null)}},\
+                 function(e){{r(false,null,String(e&&e.message||e))}})}}\
+                 catch(e){{r(false,null,String(e&&e.message||e))}}}})()",
+                name = serde_json::to_string(cmd).unwrap_or_else(|_| "\"\"".into()),
+                args = args,
+            )
+        })
+    }
+
+    /// Forward one request to the webview's `ZGui.automation` (via automation-host.js).
+    /// `kind` is "call"|"get"|"verbs".
+    fn forward(&self, kind: &str, name: &str, args: Value) -> Result<Value, String> {
+        self.dispatch(|id| {
+            format!(
+                "window.__zguiBridgeDispatch&&window.__zguiBridgeDispatch({id},{kind},{name},{args})",
+                kind = serde_json::to_string(kind).unwrap_or_else(|_| "\"call\"".into()),
+                name = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".into()),
+                args = args,
+            )
+        })
+    }
 }
 
 impl Handler for ZmaxBus {
     fn call(&self, verb: &str, args: Value) -> Result<Value, String> {
-        self.forward("call", verb, args)
+        if crate::commands::NOT_ON_BUS.contains(&verb) {
+            return Err(format!("{verb} is bridge plumbing and is not callable over the bus"));
+        }
+        if is_host_cmd(verb) {
+            self.host_invoke(verb, args)
+        } else {
+            self.forward("call", verb, args)
+        }
     }
 
     fn get(&self, state: &str) -> Result<Value, String> {
-        self.forward("get", state, json!({}))
+        if is_host_cmd(state) {
+            self.host_invoke(state, json!({}))
+        } else {
+            self.forward("get", state, json!({}))
+        }
     }
 
-    /// The whole surface: whatever the webview registered in `ZGui.automation` (appShell actions +
-    /// the zmax menu). Best-effort — an empty webview reply yields an empty (but valid) manifest.
+    /// The whole surface: every host command PLUS whatever the webview registered in
+    /// `ZGui.automation` (appShell actions + the zmax menu). The webview part is best-effort.
     fn surface(&self) -> Value {
-        let mut verbs: Vec<Value> = Vec::new();
-        let mut state: Vec<Value> = Vec::new();
+        let mut verbs: Vec<Value> = crate::commands::COMMANDS
+            .iter()
+            .map(|c| json!({ "id": *c, "label": *c }))
+            .collect();
+        // Readable, argument-free host commands, so `get(...)` works without a payload.
+        let mut state = vec![
+            json!({ "id": "recent_list", "label": "Recent projects" }),
+            json!({ "id": "bookmark_list", "label": "Bookmarks" }),
+            json!({ "id": "snippet_list", "label": "Snippets" }),
+        ];
         let mut events: Vec<Value> = Vec::new();
         if let Ok(web) = self.forward("verbs", "", json!({})) {
             if let Some(v) = web.get("verbs").and_then(|x| x.as_array()) {
