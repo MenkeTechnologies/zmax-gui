@@ -344,6 +344,26 @@ pub struct DocBlameEntry {
     /// deeper history exists — i.e. the real change may be older than the window. The row is
     /// "changed at or before this commit", not "changed by it".
     pub at_or_before: bool,
+    /// Every revision in the walked window at which THIS address changed, oldest first. The last
+    /// element is the same revision the fields above attribute the address to; the vector as a whole
+    /// is the address's lineage, which is what the provenance trail renders. An address that never
+    /// changed inside the window has one hop (its first appearance) — never zero, because a row only
+    /// exists when the newest snapshot holds the address.
+    pub history: Vec<DocBlameHop>,
+}
+
+/// One revision at which an address changed, plus what it held afterwards.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct DocBlameHop {
+    /// Abbreviated commit hash (first 8 chars).
+    pub commit: String,
+    pub hash: String,
+    pub author: String,
+    /// Author date, `YYYY-MM-DD`.
+    pub date: String,
+    pub summary: String,
+    /// The address's content as of this revision, capped like a search snippet.
+    pub text: String,
 }
 
 /// A blame pass over one document.
@@ -373,7 +393,10 @@ pub struct DocBlameResult {
 /// address, or when it did not exist at *i-1*. Walking forward once and overwriting gives each
 /// address its newest such revision without an O(revisions²) rescan.
 fn attribute(snaps: &[(Rev, Snapshot)], truncated: bool) -> Vec<DocBlameEntry> {
-    let mut last_change: HashMap<&str, usize> = HashMap::new();
+    // Every revision at which each address changed, oldest first. The last element is the blame
+    // attribution; the whole vector is the address's lineage. Collecting the list costs the same
+    // single forward walk that finding only the newest change did.
+    let mut changes: HashMap<&str, Vec<usize>> = HashMap::new();
     for (i, (_rev, snap)) in snaps.iter().enumerate() {
         for (key, (_loc, value)) in snap {
             let changed = match i.checked_sub(1) {
@@ -385,7 +408,7 @@ fn attribute(snaps: &[(Rev, Snapshot)], truncated: bool) -> Vec<DocBlameEntry> {
                     .unwrap_or(true),
             };
             if changed {
-                last_change.insert(key.as_str(), i);
+                changes.entry(key.as_str()).or_default().push(i);
             }
         }
     }
@@ -398,7 +421,8 @@ fn attribute(snaps: &[(Rev, Snapshot)], truncated: bool) -> Vec<DocBlameEntry> {
     newest
         .iter()
         .map(|(key, (loc, value))| {
-            let idx = last_change.get(key.as_str()).copied().unwrap_or(0);
+            let hops = changes.get(key.as_str()).cloned().unwrap_or_default();
+            let idx = hops.last().copied().unwrap_or(0);
             let rev = &snaps[idx].0;
             DocBlameEntry {
                 locator: loc.clone(),
@@ -411,6 +435,23 @@ fn attribute(snaps: &[(Rev, Snapshot)], truncated: bool) -> Vec<DocBlameEntry> {
                 // Only the oldest walked revision can be an artefact of the window: every later
                 // attribution was proved by a real difference against its predecessor.
                 at_or_before: truncated && idx == 0,
+                history: hops
+                    .iter()
+                    .map(|&i| {
+                        let (r, snap) = &snaps[i];
+                        DocBlameHop {
+                            commit: r.hash.chars().take(8).collect(),
+                            hash: r.hash.clone(),
+                            author: r.author.clone(),
+                            date: fmt_date(r.time),
+                            summary: r.summary.clone(),
+                            // What the address held AFTER this revision's change — the value the
+                            // hop introduced, which is what makes the trail readable as a lineage
+                            // rather than a list of commit ids.
+                            text: snap.get(key).map(|(_, v)| snippet(v)).unwrap_or_default(),
+                        }
+                    })
+                    .collect(),
             }
         })
         .collect()
@@ -623,6 +664,54 @@ mod tests {
             "A1 never changed, so it must still be blamed to the 1st commit"
         );
         assert!(!a1.at_or_before, "history was fully walked, so nothing is approximate");
+        cleanup(&dir);
+    }
+
+    /// The lineage a provenance trail renders: EVERY revision at which one address changed, oldest
+    /// first, each carrying the value it introduced — and only the revisions that changed THAT
+    /// address. A trail that leaked its neighbours' commits would show a cell being edited by
+    /// changes that never touched it, which is the same wrong answer the whole module exists to
+    /// avoid, just one level deeper.
+    #[test]
+    fn each_address_carries_only_its_own_revisions_as_lineage() {
+        let dir = tempdir();
+        init_repo(&dir);
+        let book = dir.join("figures.xlsx");
+
+        write_xlsx(&book, &[("A1", "revenue"), ("B1", "1")]);
+        commit_all(&dir, "r1");
+        write_xlsx(&book, &[("A1", "revenue"), ("B1", "2")]);
+        commit_all(&dir, "r2 bumps B1");
+        write_xlsx(&book, &[("A1", "revenue"), ("B1", "3")]);
+        commit_all(&dir, "r3 bumps B1 again");
+
+        let res = doc_blame(book.to_string_lossy().into_owned(), None).expect("blame");
+
+        let b1 = entry_for(&res, "B1");
+        let trail: Vec<(&str, &str)> = b1
+            .history
+            .iter()
+            .map(|h| (h.summary.as_str(), h.text.as_str()))
+            .collect();
+        assert_eq!(
+            trail,
+            vec![("r1", "1"), ("r2 bumps B1", "2"), ("r3 bumps B1 again", "3")],
+            "B1's lineage is every revision that changed it, oldest first, with the value each set"
+        );
+        assert_eq!(
+            b1.history.last().map(|h| h.hash.as_str()),
+            Some(b1.hash.as_str()),
+            "the newest hop must be the revision the row is blamed to"
+        );
+
+        // A1 was written once and never changed: one hop, not three. This is the assertion that
+        // fails if lineage is collected per REVISION instead of per ADDRESS.
+        let a1 = entry_for(&res, "A1");
+        assert_eq!(
+            a1.history.iter().map(|h| h.summary.as_str()).collect::<Vec<_>>(),
+            vec!["r1"],
+            "A1 never changed after r1, so its trail has exactly one hop"
+        );
         cleanup(&dir);
     }
 

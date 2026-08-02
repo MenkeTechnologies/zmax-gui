@@ -686,6 +686,30 @@
           openDocument({ path: path, rel: path.slice(path.lastIndexOf("/") + 1), locator: en.locator });
         });
         list.appendChild(row);
+
+        // The address's LINEAGE, under its blame row: every revision at which THIS address changed,
+        // oldest first, each hop carrying the value it introduced. `en.history` is per-address (see
+        // doc_blame.rs `attribute`), so a cell's trail never shows a commit that changed only its
+        // neighbours. Rendered with the shared provenance-trail component, which is exactly a
+        // breadcrumb of data lineage rather than navigation.
+        if (en.history && en.history.length && typeof ZGui.provenanceTrail === "function") {
+          var lin = document.createElement("div");
+          lin.className = "zp-docblame-lineage";
+          // A hop's own click opens its popover; it must not also fire the row's "open document".
+          lin.addEventListener("click", function (ev) { ev.stopPropagation(); });
+          ZGui.provenanceTrail(lin, {
+            hops: en.history.map(function (h, i) {
+              return {
+                // The first hop is where the value entered the window; the rest are edits to it.
+                kind: i === 0 ? "source" : "transform",
+                label: h.commit,
+                detail: h.date + " · " + h.author + " — " + h.summary +
+                  (h.text ? "\n" + T("zmax.panel.doc_blame_value", "value") + ": " + h.text : ""),
+              };
+            }),
+          });
+          list.appendChild(lin);
+        }
       });
       if (!entries.length) {
         var e = document.createElement("div");
