@@ -413,7 +413,7 @@ GitHub release. The bundled zmax (release build of the submodule) and stryke (la
 are staged automatically by `beforeBuildCommand`, so each `.app` is self-contained.
 
 ```sh
-git tag v0.1.0 && git push --tags
+git tag "v$(node -p "require('./package.json').version")" && git push --tags
 ```
 
 ## Links
