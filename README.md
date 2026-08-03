@@ -269,6 +269,30 @@ documents. Only a literal *replace* rule can cross that boundary — the other r
 patterns, and a paragraph or a cell is not a line — so the rest are refused with that reason stated,
 never silently applied to nothing.
 
+### Proving a rule before it fires
+
+Both surfaces also carry **Verify**. A rule derived from two `before → after` rows is, until it runs,
+a guess about every line it has not seen; the live preview only exercises it against lines the author
+typed into the sample box, which is the one place it is guaranteed to behave. The buffer path then
+writes `:%s/…/…/g` into the PTY with nothing reading back, so the first evidence of a rule that was
+too broad is the damage.
+
+Verify runs the same rule over the real project through the host's `replace_project` **dry run**
+(`apply: false` — it reads every text file in scope and rewrites none) and reports what the rule
+moves: the number of matches, the number of files, the before→after of each line, and how many of the
+shown lines the rule matched but left byte-identical. The counts are complete rather than sampled —
+the host totals every match before it caps the preview list, so a truncated row list still carries an
+exact total — and because a substitute only rewrites what its pattern matches, every line absent from
+that count is one the rule provably does not touch.
+
+The one thing it will not do is approximate. A rule is checked only when it has an exact equivalent
+in the host's regex flavour: literal *replace*, *wrap*, and every *reshape* (whose anchored pattern is
+already the one each example was verified against, so the check runs the rule itself rather than a
+re-derivation of it). The three case rules emit vim's `\U` / `\L` / `\u` replacement operators,
+which the host's regex engine has no counterpart for; rather than measure some other rule and present
+the number as this one's, Verify says so. Editing any row clears a standing report, so a proof can
+never outlive the rule it was measured for.
+
 ## Editor state, reconstructed from the PTY stream
 
 Every GUI wrapper in the MacVim / gVim / neovim-GUI lineage needs the editor to cooperate: MacVim
