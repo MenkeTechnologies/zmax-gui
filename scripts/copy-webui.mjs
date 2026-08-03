@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = resolve(here, "../crates/zmax-gui-core/webui");
 const dst = resolve(here, "../frontend");
 
-for (const f of ["menu.js", "zmax.css"]) {
+for (const f of ["menu.js", "editor-state.js", "editor-hud.js", "zmax.css"]) {
   const from = resolve(src, f);
   if (!existsSync(from)) {
     console.error(`copy-webui: missing ${from} (run: git submodule update --init crates/zmax-gui-core)`);

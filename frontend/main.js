@@ -34,6 +34,12 @@
     var container = document.createElement("div");
     container.id = "terminalContainer";
     container.className = "term-body";
+    // Editor HUD — the buffer/tab bar, status strip and minimap, driven entirely by the state
+    // editor-state.js reconstructs from the PTY stream (the editor is unmodified and exposes no RPC).
+    // Sits above the terminal body inside the same pane so it scrolls and hides with it.
+    var hudHost = document.createElement("div");
+    hudHost.id = "editorHud";
+    pane.appendChild(hudHost);
     pane.appendChild(container);
     shell.body.appendChild(pane);
 
@@ -43,6 +49,12 @@
     // App-local project workbench: quick-open (⌘P), find-in-files (⇧⌘J), recent (⌘E), project files
     // (⇧⌘E) and a git panel — all in the ⌘K palette. Mounts after menu.js so its palette items append.
     if (window.ZmaxPanels && typeof window.ZmaxPanels.mount === "function") window.ZmaxPanels.mount(shell);
+
+    // Mount the HUD after menu.js, so its tab clicks drive the editor through the same PTY bridge
+    // (and therefore the same mode handling) every other GUI action uses.
+    if (window.ZmaxEditorHud && typeof window.ZmaxEditorHud.mount === "function") {
+      try { window.ZmaxEditorHud.mount(hudHost, {}); } catch (e) { /* the HUD is additive; never block boot */ }
+    }
 
     // Install the automation-bus webview dispatcher (window.__zguiBridgeDispatch + emit forwarding) so
     // the native bus (bus.rs) can forward App::here()->verbs() into ZGui.automation — WITHOUT this the

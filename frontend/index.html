@@ -287,6 +287,7 @@
   <!-- the embedded PTY terminal (shared zpwr-embed-terminal frontend) -->
   <script src="xterm.js"></script>
   <script src="terminal.js"></script>
+  <script src="editor-state.js"></script>
 
   <!-- OS-native application menu API (ZGui.menu.install/buildSpec); menu.js overrides buildSpec so the
        appShell's single install() realizes the full zmax menu bar. Must load before menu.js. -->
@@ -294,6 +295,11 @@
 
   <!-- the MacVim GUI bridge (menu/shortcuts/dialogs → PTY); must load before main.js mounts -->
   <script src="menu.js"></script>
+  <!-- Editor state reconstructed from the PTY stream (no editor cooperation), and the GUI surfaces
+       that spend it: the buffer/tab bar, status strip and minimap. editor-state.js must precede
+       menu.js's consumers and editor-hud.js, which reads window.zmaxEditorState at mount. -->
+  <script src="lib/zgui-core/webui/code-minimap.js"></script>
+  <script src="editor-hud.js"></script>
 
   <!-- shared multi-pane file browser (zpwr-file-browser): fb-backend.js installs the Tauri fs bridge
        + host shims BEFORE file-browser.js, which inits lazily on first overlay open (panels.js) -->

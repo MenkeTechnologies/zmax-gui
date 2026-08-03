@@ -66,6 +66,8 @@ zmax-gui/
 └─ frontend/
    ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
    ├─ menu.js                   the MacVim GUI surface (all zgui widgets → PTY)
+   ├─ editor-state.js           editor state reconstructed FROM the PTY stream (the return path)
+   ├─ editor-hud.js             buffer/tab bar + status strip + minimap, driven by that state
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
    └─ lib/zgui-core             the shared widget library (submodule)
@@ -266,6 +268,50 @@ a synthesized rule can run over the buffer (the `:%s` bridge, unchanged) or over
 documents. Only a literal *replace* rule can cross that boundary — the other rules emit whole-line
 patterns, and a paragraph or a cell is not a line — so the rest are refused with that reason stated,
 never silently applied to nothing.
+
+## Editor state, reconstructed from the PTY stream
+
+Every GUI wrapper in the MacVim / gVim / neovim-GUI lineage needs the editor to cooperate: MacVim
+links Vim as a library, `nvim --embed` **is** a cooperation protocol, and the rest of the field is
+built on some RPC socket. `zmax` exposes none of that — no control socket, no `--embed`, no IPC. So
+until now the channel was one-way: the GUI wrote keystrokes into the PTY and nothing ever came back,
+which is why there was no buffer bar, no live position and no minimap.
+
+`frontend/editor-state.js` closes the loop **without asking the editor for anything**. It reads the
+same bytes the terminal pane already receives and rebuilds enough of the screen to read the editor's
+own statusline and bufferline back off it. The editor is unmodified and unaware.
+
+- **Why a screen model, not a regex.** zmax renders through a cell-diff backend: it emits
+  `CSI row;col H` and then only the glyphs that changed, wrapped in synchronized-output markers.
+  A statusline is assembled from a dozen scattered writes, so reconstructing it requires a grid. The
+  grid is a deliberate subset of a terminal — cursor motion, erase, SGR foreground, OSC titles — and
+  the parser is a state machine, because the PTY reader frames on 4 KiB with no regard for escape
+  boundaries.
+- **Why not xterm.js.** The pane's xterm instance belongs to `zpwr-embed-terminal`, a crate four
+  other apps embed. Exporting its internals to reach `buffer.active` would fork a shared component
+  for one app's feature; a private subset parser forks nothing and costs one pass over bytes already
+  in this process — no second process, no polling, no LSP.
+- **What is recovered:** mode, file path, modified / read-only, cursor `line:col`, scroll percentage,
+  selection count, line ending, encoding, per-severity diagnostic counts (carrying the colour that
+  *is* the severity — every severity prints the same glyph), and the buffer list when the bufferline
+  is on. The focused view's statusline is found by its mode token rather than by a fixed row offset,
+  because the workbench inserts panels below it and an unfocused split blanks its mode.
+- **What is not, and is not claimed:** the buffer text (only the visible viewport crosses the PTY,
+  and only as diffs), the total line count, and which diagnostic sits on which line. Those fields
+  read `null`.
+
+`frontend/editor-hud.js` spends it: a live buffer/tab bar, a status strip, and a `ZGui.codeMinimap`
+with the cursor marked. Clicking a tab is the clearest proof the channel really is bidirectional —
+the editor has no "switch to buffer N", only next/previous, so a tab bar is impossible without
+knowing which buffer is active. The minimap's density comes from the file on disk, since the buffer
+text never crosses the PTY, and its cursor band is exactly one line wide because the cursor line is
+exact while the scrolled viewport is not carried by the stream at all.
+
+The return path also makes the **outbound** path faster. Every burst used to open with a defensive
+`Esc` plus a 50 ms wait for the editor's esc-disambiguation window, because the GUI could not know
+the mode. Now `menu.js` skips both when the reconstruction is *trusted* and says normal mode —
+gated on trust, never on the cached mode alone: the GUI's own writes mark the reading stale until the
+next observed statusline, since between a write and the redraw the mode is exactly what is unknown.
 
 ## MacVim-style GUI
 
