@@ -512,6 +512,19 @@ one drives the real `main.js` / `panels.js` against a stubbed Tauri host and ass
 to Rust — the floating shell's PTY geometry (at spawn and on every later resize) and the documents
 search with its formats filter.
 
+### Hooks editor
+
+`⌘K` ▸ **Hooks editor** opens the shared Monaco surface
+([`zpwr-hooks-editor`](https://github.com/MenkeTechnologies/zpwr-hooks-editor) + `ZGui.hooks`) over
+the app's own hook points — editor started / restarted, file opened / saved, project opened, search
+run, git committed, terminal spawned, locale changed, app quit — each one a stryke script the host
+runs through `run_stryke_hook`, with the stryke LSP wired in for completions and diagnostics.
+
+The bar names the runtime that will actually execute those scripts: `sidecar.rs`'s resolution order
+is `STRYKE_BIN`, then the bundled sidecar, then `PATH`, and the strip shows which one answered (full
+path on hover). When nothing answers it says **stryke: not found** in red — hooks and the LSP cannot
+run, and saying so up front is the difference between a diagnosis and "my hook did nothing".
+
 ## Bundled binaries (self-contained)
 
 The app **bundles** both the `zmax` editor and the `stryke` runtime as Tauri `externalBin` sidecars —

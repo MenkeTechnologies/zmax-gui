@@ -39,6 +39,12 @@
       padding: 6px 10px; border-bottom: 1px solid rgba(5,217,232,.25); flex: 0 0 auto; }
     .ze-hooks-title { font-size: 13px; color: var(--cyan, #05d9e8); letter-spacing: .04em; }
     #hooksStatus { font-size: 11px; color: var(--text-dim, #6a7a90); }
+    /* Which stryke actually runs the hooks (sidecar.rs stryke_bin_path). Monospace + ellipsis so a
+       long bundle path never pushes the close button off the bar; the full path is the title. */
+    #hooksRuntime { font-size: 11px; font-family: 'Hack Nerd Font', Menlo, monospace;
+      color: var(--text-dim, #6a7a90); max-width: 46ch; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    #hooksRuntime.ze-missing { color: #ff3860; }
     #hooksCloseHost { margin-left: auto; }
     #zeHooksHost { flex: 1 1 auto; min-height: 0; overflow: hidden; }
     /* The always-on IDE terminal (.terminal-pane, z-index 9998) otherwise floats above the overlays
@@ -228,6 +234,9 @@
       <span class="ze-hooks-title">🪝 Stryke Hooks</span>
       <span id="hooksModeHost"></span>
       <span id="hooksStatus"></span>
+      <!-- Which stryke binary will run these hooks — filled from stryke_bin_path() when the
+           overlay first opens. -->
+      <span id="hooksRuntime"></span>
       <span id="hooksCloseHost"></span>
     </div>
     <div id="zeHooksHost"></div>
@@ -368,6 +377,25 @@
         if (closeHost && window.ZGui && typeof ZGui.button === "function") {
           closeHost.appendChild(ZGui.button({ label: "✕", variant: "mini", onClick: function () { ov.hidden = true; } }));
         }
+        // Name the runtime that will actually execute these hooks. Everything in this overlay —
+        // run_stryke_hook, the LSP, the completions — resolves through sidecar.rs's stryke lookup
+        // (STRYKE_BIN, then the bundled sidecar, then PATH), and an empty answer means the bundle
+        // shipped without one. Saying so up front turns "my hook did nothing" into "no runtime".
+        (function () {
+          var rt = document.getElementById("hooksRuntime");
+          var TA = window.__TAURI__;
+          if (!rt || !TA || !TA.core) return;
+          TA.core.invoke("stryke_bin_path").then(function (p) {
+            if (p) {
+              rt.textContent = "stryke: " + p.slice(p.lastIndexOf("/") + 1);
+              rt.title = p;
+            } else {
+              rt.classList.add("ze-missing");
+              rt.textContent = "stryke: not found";
+              rt.title = "No bundled sidecar and none on PATH — hooks and the LSP cannot run. Set STRYKE_BIN.";
+            }
+          }, function () {});
+        })();
         if (!window.ZGui || !window.ZGui.hooks) { if (status) status.textContent = "hooks runtime missing"; return; }
         (async function () {
           // hooks + runner were already published at boot (above); openHooksEditor only wires LSP + mounts.
