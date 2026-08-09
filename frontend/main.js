@@ -8,23 +8,47 @@
     var s = (typeof window.t === "function") ? window.t(key) : null;
     return (s && s !== key) ? s : english;
   }
+  // Commands the SHELL owns — the ones with no menu item and no shared-embed equivalent. Each carries
+  // a stable, locale-independent id: the appShell registers every published id as an `appshell.<id>`
+  // verb on the GUI Automation Bus, and a saved command chain stores that id, so deriving one from
+  // the (translated) label would rename the verb on a locale switch. Restart / Focus editor and the
+  // Hooks editor are NOT here: menu.js publishes the first two as Editor ▸ Restart / Focus, and the
+  // shell lists the hooks editor itself as a shared embed.
+  function shellCommands() {
+    return [
+      // Tmux tiling (ZGui.tmux) — opens the overlay; C-b is the prefix (C-b c new window, %/" split).
+      { id: "zmax.tmux", label: T("zmax.shell.tmux", "Tmux"), icon: "▦", keyword: "tmux tile split pane", run: function () { if (window.ZGui && ZGui.tmux && typeof ZGui.tmux.open === "function") ZGui.tmux.open(); } },
+    ];
+  }
+
+  // Merge `extra` into `list`, first id wins. setCommands replaces the vocabulary wholesale, so every
+  // publisher has to hand over the union or it erases the others.
+  function mergeCommands(list, extra) {
+    var out = Array.isArray(list) ? list.slice() : [];
+    var have = {};
+    out.forEach(function (c) { if (c && c.id) have[c.id] = 1; });
+    extra.forEach(function (c) { if (!have[c.id]) out.push(c); });
+    return out;
+  }
+
   function boot() {
     if (!window.ZGui || typeof ZGui.appShell !== "function") return;
     var shell = ZGui.appShell(document.getElementById("app"), {
       brand: { branch: "app", title: "ZMAX", subtitle: T("zmax.shell.subtitle", "editor") },
       filterPlaceholder: T("zmax.shell.filter", "Filter…"),
-      palette: [
-        { label: T("zmax.shell.restart_editor", "Restart editor"), run: restart },
-        { label: T("zmax.shell.focus_editor", "Focus editor"), run: function () { var c = document.getElementById("terminalContainer"); if (c) { var ta = c.querySelector("textarea"); if (ta) ta.focus(); } } },
-        // Embedded Stryke hooks editor (zpwr-hooks-editor) — opens the in-app #hooksOverlay defined
-        // in index.html; window.openHooksEditor mounts the ZGui.hooks chooser + Monaco editor once.
-        { label: T("zmax.shell.hooks_editor", "Hooks editor"), run: function () { if (typeof window.openHooksEditor === "function") window.openHooksEditor(); } },
-        // Tmux tiling (ZGui.tmux) — opens the overlay; C-b is the prefix (C-b c new window, %/" split).
-        { label: T("zmax.shell.tmux", "Tmux"), run: function () { if (window.ZGui && ZGui.tmux && typeof ZGui.tmux.open === "function") ZGui.tmux.open(); } },
-      ],
+      commands: shellCommands(),
       // Extend the real Settings panel (⚙ / ⌘,) with the editor's language picker + toggles.
       settingsExtra: function (b) { if (window.ZmaxMenu && typeof window.ZmaxMenu.settingsExtra === "function") window.ZmaxMenu.settingsExtra(b); },
     });
+
+    // menu.js (at mount and after a locale switch) and panels.js both publish their own vocabulary
+    // through setCommands, which REPLACES the list — so re-merge the shell's own commands on every
+    // call. Without this the shell's commands survive only until the first republish, which is the
+    // same boot: menu.js mounts a few lines below.
+    if (typeof shell.setCommands === "function") {
+      var setCommands = shell.setCommands.bind(shell);
+      shell.setCommands = function (list) { setCommands(mergeCommands(list, shellCommands())); };
+    }
 
     // A fullscreen terminal pane inside shell.body — provided so zpwr-embed-terminal uses it instead
     // of injecting its floating dock pane (its _ensureTerminalDom is a no-op when #terminalPane exists).
@@ -171,14 +195,6 @@
       // once the editor is up, sync its theme to the saved zgui-core colorscheme (unified palette)
       setTimeout(function () { if (typeof window.zmaxSyncTheme === "function") window.zmaxSyncTheme(); }, 2500);
     }, 800);
-  }
-  function restart() {
-    var T = tauri();
-    if (!T) return;
-    T.invoke("terminal_kill").then(function () {
-      if (typeof window.showTerminal === "function") window.showTerminal();
-      startEditor();
-    }).catch(function () {});
   }
 
   // Run immediately (scripts are at body end, so #app + the terminal globals already exist) — this

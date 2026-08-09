@@ -51,7 +51,9 @@ zmax-gui/
 │   ├─ encoding_ops.rs   detect + transcode a file's character encoding (UTF-8/16, Latin-1)
 │   ├─ git_more.rs       repo-wide log, show-commit, diff two revisions, commit graph
 │   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
-│   └─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
+│   ├─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
+│   ├─ bus.rs            GUI Automation Bus socket: host commands + webview appshell.* verbs
+│   └─ commands.rs       the host command list the bus advertises (+ its withheld exceptions)
 ├─ crates/
 │   ├─ zmax            the editor — vendored submodule, built → bundled sidecar
 │   ├─ zpwr-embed-terminal   shared PTY engine (submodule)
@@ -70,6 +72,7 @@ zmax-gui/
    ├─ editor-hud.js             buffer/tab bar + status strip + minimap, driven by that state
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
+   ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
    └─ lib/zgui-core             the shared widget library (submodule)
 ```
 
@@ -431,9 +434,15 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   Snippets panel): insert a snippet via the fuzzy picker (`:Snippets`) and open the library editor to
   create / edit / delete snippets (`:snippets`).
 - **Toolbar** (`ZGui.buttonBar`) — new / open / save / buffer nav / find / replace / go-to-def / format / git status / list marks / replay macro / toggle fold / comment lines / list tabs / split / full screen.
-- **Command palette** (`⌘K`) — every menu action, fuzzy-searchable.
+- **Command palette** (`⌘K`) — every menu action, fuzzy-searchable, and each one also callable from a
+  script or a saved command chain (see [Scriptable](#scriptable-every-gui-action-is-a-bus-verb)).
 - **Cmd-shortcuts** — ⌘S save, ⇧⌘S Save As, ⌘O open, ⌘W close buffer, ⌘N new, ⌘Z/⇧⌘Z undo/redo,
   ⌘F find, ⌘G/⇧⌘G next/prev, ⌘{ ⌘} buffer cycle, ⌃⌘F full screen.
+- **Tmux tiling** (`⌘K` ▸ Tmux) — the shared `ZGui.tmux` overlay, wired by `frontend/tmux-config.js`
+  so each tile is a **separate editor**: its own xterm on its own backend PTY session
+  (`term_session_*`), with the editor exec'd into it exactly as the fullscreen one is. `C-b` is the
+  prefix (`C-b c` new window, `%` / `"` split), and the always-on editor pane hides while the overlay
+  is up.
 - **Open / Save As / Help** dialogs (`ZGui.modal` + `ZGui.tree` file browser).
 - **Right-click context menu** in the editor (`ZGui.contextMenu`).
 - **Drag-and-drop** files to open (`ZGui.fileDrag`).
@@ -447,6 +456,38 @@ trackpad gesture pseudo-keys, find-pasteboard sharing. A passive always-on **tab
 omitted on purpose — a faithful one needs editor↔GUI introspection the raw PTY doesn't expose, and a
 drifting strip would lie about state; the Tabs menu + the on-demand `:tabs` picker (rendered by the
 editor itself) cover switching without that risk.
+
+## Scriptable: every GUI action is a bus verb
+
+The app opens its **GUI Automation Bus** socket at startup (`bus.rs`), so a stryke script reaches it
+by name — `App::open("zmax-gui")`, or `App::here()` from a hook running inside the app. The surface
+is published over two routes and `verbs()` returns their union:
+
+| Route | What it exposes | Dispatched by |
+| --- | --- | --- |
+| host | the app's own `#[tauri::command]` surface — project + document search / replace, blame, git, text and editor tools, the file browser, the terminal | the host's own IPC, by name |
+| webview | `appshell.<id>` — the shell's built-ins plus **every command the GUI publishes**: the whole MacVim menu tree, the project workbench overlays, and the shell's own commands | `automation-host.js` in the webview |
+
+`commands.rs` is the host list, and `NOT_ON_BUS` is its explicit exception list — the bridge's own
+`zgui_bridge_reply` / `zgui_bridge_event` plumbing, withheld because a script that could reach them
+would be able to resolve another caller's in-flight request or forge an event. A drift-guard test
+requires every registered command to appear in exactly one of the two lists, so adding a command
+forces a deliberate decision instead of a silent omission.
+
+The webview half turns on one detail. The appShell registers an `appshell.<id>` verb for each
+command published through **`setCommands`**; its older `setPaletteItems` entry point fills the `⌘K`
+palette and registers nothing. All three of the app's publishers — `main.js` (the shell's own
+commands), `menu.js` (the menu tree) and `panels.js` (the workbench) — go through `setCommands`, and
+because that call *replaces* the vocabulary each publisher hands over the union rather than its own
+slice.
+
+Every id is **locale-independent**: `zmax.<action>` for a menu command (naming the entry in the
+`ZmaxMenu.actions` bridge table, the same key the native menu uses for its item ids and
+accelerators) and `zmax.panel.<surface>` for a workbench overlay. An id derived from a label would be
+a translated string, so switching language would rename every verb and break every saved script and
+command chain that referenced one. `frontend/vocabulary.test.cjs` drives the three real publishers
+headlessly and pins all of it: the union is published, through `setCommands`, with no id claimed by
+two different actions, and with every id unchanged across a locale switch.
 
 ## Bundled binaries (self-contained)
 

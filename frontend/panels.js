@@ -1816,39 +1816,55 @@
   };
 
   // ── palette + shortcuts wiring ──────────────────────────────────────────────────────────────────
+  // Every workbench surface is published as a command with a stable, LOCALE-INDEPENDENT id. The
+  // appShell registers each published id as an `appshell.<id>` verb on the GUI Automation Bus, and a
+  // saved user command / GUI script stores the id it picked — so an id derived from the (translated)
+  // label would rename itself on a locale switch and strand every saved chain that used it. The ids
+  // name the function each row runs; menu.js's own ids are `zmax.<action>`, so the `zmax.panel.`
+  // prefix keeps the two vocabularies from colliding (Git ▸ Blame runs `:blame` in the editor;
+  // zmax.panel.gitBlame opens the workbench blame panel — different commands, different ids).
   function myPaletteItems() {
+    var P = T("zmax.menu.project", "Project") + " ▸ ";
+    var G = T("zmax.menu.git", "Git") + " ▸ ";
     return [
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.quick_open", "Quick Open") + "  ⌘P", run: quickOpen },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.find_in_files", "Find in Files") + "  ⇧⌘J", run: findInFiles },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.search_replace", "Search & Replace") + "  ⇧⌘H", run: searchReplace },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.goto_symbol", "Go to Symbol") + "  ⇧⌘O", run: gotoSymbol },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.find_def", "Find Definition") + "  ⇧⌘D", run: findDefinition },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.markers", "TODO / Markers") + "  ⇧⌘T", run: markers },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.bookmarks", "Bookmarks") + "  ⌘B", run: bookmarks },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.recent", "Recent Files") + "  ⌘E", run: recentFiles },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.project_files", "Project Files") + "  ⇧⌘E", run: projectBrowser },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.file_browser", "File Browser"), run: openFileBrowser },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.snippets", "Snippets") + "  ⇧⌘I", run: snippets },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.project_stats", "Project Stats"), run: projectStats },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.compare_files", "Compare Files"), run: compareFiles },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.sort_lines", "Sort Lines"), run: sortLines },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.cleanup", "File Cleanup"), run: fileCleanup },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.batch_rename", "Batch Rename"), run: batchRename },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.align_columns", "Align Columns"), run: alignColumns },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.comment_toggle", "Comment / Uncomment") + "  ⇧⌘/", run: commentToggle },
-      { label: T("zmax.menu.project", "Project") + " ▸ " + T("zmax.panel.file_encoding", "File Encoding"), run: fileEncoding },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.git_changes", "Git Changes"), run: gitPanel },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.blame", "Blame") + "  ⇧⌘B", run: function () { gitBlame(); } },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.doc_blame", "Document Blame") + "  ⇧⌘Y", run: function () { docBlame(); } },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.history", "File History"), run: function () { gitHistory(); } },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.repo_log", "Repository Log"), run: gitLog },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.commit_graph", "Commit Graph"), run: gitGraph },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.diff_revs", "Diff Revisions"), run: diffRevisions },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.branches", "Git Branches"), run: gitBranches },
-      { label: T("zmax.menu.git", "Git") + " ▸ " + T("zmax.panel.stash", "Git Stash"), run: gitStash },
+      { id: "zmax.panel.quickOpen", label: P + T("zmax.panel.quick_open", "Quick Open") + "  ⌘P", run: quickOpen },
+      { id: "zmax.panel.findInFiles", label: P + T("zmax.panel.find_in_files", "Find in Files") + "  ⇧⌘J", run: findInFiles },
+      { id: "zmax.panel.searchReplace", label: P + T("zmax.panel.search_replace", "Search & Replace") + "  ⇧⌘H", run: searchReplace },
+      { id: "zmax.panel.gotoSymbol", label: P + T("zmax.panel.goto_symbol", "Go to Symbol") + "  ⇧⌘O", run: gotoSymbol },
+      { id: "zmax.panel.findDefinition", label: P + T("zmax.panel.find_def", "Find Definition") + "  ⇧⌘D", run: findDefinition },
+      { id: "zmax.panel.markers", label: P + T("zmax.panel.markers", "TODO / Markers") + "  ⇧⌘T", run: markers },
+      { id: "zmax.panel.bookmarks", label: P + T("zmax.panel.bookmarks", "Bookmarks") + "  ⌘B", run: bookmarks },
+      { id: "zmax.panel.recentFiles", label: P + T("zmax.panel.recent", "Recent Files") + "  ⌘E", run: recentFiles },
+      { id: "zmax.panel.projectBrowser", label: P + T("zmax.panel.project_files", "Project Files") + "  ⇧⌘E", run: projectBrowser },
+      { id: "zmax.panel.fileBrowser", label: P + T("zmax.panel.file_browser", "File Browser"), run: openFileBrowser },
+      { id: "zmax.panel.snippets", label: P + T("zmax.panel.snippets", "Snippets") + "  ⇧⌘I", run: snippets },
+      { id: "zmax.panel.projectStats", label: P + T("zmax.panel.project_stats", "Project Stats"), run: projectStats },
+      { id: "zmax.panel.compareFiles", label: P + T("zmax.panel.compare_files", "Compare Files"), run: compareFiles },
+      { id: "zmax.panel.sortLines", label: P + T("zmax.panel.sort_lines", "Sort Lines"), run: sortLines },
+      { id: "zmax.panel.fileCleanup", label: P + T("zmax.panel.cleanup", "File Cleanup"), run: fileCleanup },
+      { id: "zmax.panel.batchRename", label: P + T("zmax.panel.batch_rename", "Batch Rename"), run: batchRename },
+      { id: "zmax.panel.alignColumns", label: P + T("zmax.panel.align_columns", "Align Columns"), run: alignColumns },
+      { id: "zmax.panel.commentToggle", label: P + T("zmax.panel.comment_toggle", "Comment / Uncomment") + "  ⇧⌘/", run: commentToggle },
+      { id: "zmax.panel.fileEncoding", label: P + T("zmax.panel.file_encoding", "File Encoding"), run: fileEncoding },
+      { id: "zmax.panel.gitChanges", label: G + T("zmax.panel.git_changes", "Git Changes"), run: gitPanel },
+      { id: "zmax.panel.gitBlame", label: G + T("zmax.panel.blame", "Blame") + "  ⇧⌘B", run: function () { gitBlame(); } },
+      { id: "zmax.panel.docBlame", label: G + T("zmax.panel.doc_blame", "Document Blame") + "  ⇧⌘Y", run: function () { docBlame(); } },
+      { id: "zmax.panel.gitHistory", label: G + T("zmax.panel.history", "File History"), run: function () { gitHistory(); } },
+      { id: "zmax.panel.gitLog", label: G + T("zmax.panel.repo_log", "Repository Log"), run: gitLog },
+      { id: "zmax.panel.gitGraph", label: G + T("zmax.panel.commit_graph", "Commit Graph"), run: gitGraph },
+      { id: "zmax.panel.diffRevisions", label: G + T("zmax.panel.diff_revs", "Diff Revisions"), run: diffRevisions },
+      { id: "zmax.panel.gitBranches", label: G + T("zmax.panel.branches", "Git Branches"), run: gitBranches },
+      { id: "zmax.panel.gitStash", label: G + T("zmax.panel.stash", "Git Stash"), run: gitStash },
     ];
   }
   function registerPalette() { if (window.ZGui && ZGui.palette && ZGui.palette.register) ZGui.palette.register(myPaletteItems()); }
+
+  // menu.js's vocabulary, so a republish that carries ours also carries the menu's — setCommands
+  // replaces the list wholesale. __zemPalette is the copy menu.js keeps of what it last published.
+  function menuCommands() {
+    if (window.ZmaxMenu && typeof window.ZmaxMenu.paletteItems === "function") return window.ZmaxMenu.paletteItems();
+    return window.__zemPalette || [];
+  }
 
   function onKey(e) {
     if (!e.metaKey || e.altKey) return;
@@ -1880,13 +1896,24 @@
       }).catch(function () {});
     }
 
-    // Add our actions to ⌘K. menu.js's retranslate() re-sets the palette after the locale loads, which
-    // clears ours — so wrap setPaletteItems to re-append every time it runs.
-    if (shell && typeof shell.setPaletteItems === "function") {
+    // Publish our actions. setCommands is the path that ALSO registers each id as an `appshell.<id>`
+    // verb on the automation bus; setPaletteItems fills ⌘K and registers nothing, so it is only the
+    // fallback for a shell that predates setCommands. Either way menu.js republishes its own
+    // vocabulary at mount and after the locale loads — replacing the list under setCommands, clearing
+    // the palette under the legacy path — so wrap it and re-add ours every time it runs.
+    if (shell && typeof shell.setCommands === "function") {
+      var setCommands = shell.setCommands.bind(shell);
+      shell.setCommands = function (items) { setCommands((Array.isArray(items) ? items : []).concat(myPaletteItems())); };
+      // menu.js already published (main.js mounts it first), and that call did not carry ours —
+      // republish the union now.
+      shell.setCommands(menuCommands());
+    } else if (shell && typeof shell.setPaletteItems === "function") {
       var orig = shell.setPaletteItems.bind(shell);
       shell.setPaletteItems = function (items) { orig(items); registerPalette(); };
+      registerPalette();
+    } else {
+      registerPalette();
     }
-    registerPalette();
 
     // Global ⌘ shortcuts (capture phase; these keys aren't claimed by menu.js/appShell).
     window.addEventListener("keydown", onKey, true);
