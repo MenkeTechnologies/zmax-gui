@@ -7,7 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== JS bridge tests =="
-node --test crates/zmax-gui-core/webui/menu.test.cjs
+# The shared GUI surface (menu bridge + the PTY-stream editor reconstruction and its HUD) plus the
+# app-local wiring tests (frontend/) — globs, so a new surface test is picked up without editing this.
+node --test crates/zmax-gui-core/webui/*.test.cjs frontend/*.test.cjs
 
 echo "== staging sidecars (needed to compile the Rust bin) =="
 node scripts/prepare-stryke-sidecar.mjs || true
