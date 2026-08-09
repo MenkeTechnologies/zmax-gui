@@ -23,7 +23,9 @@
 /* Diff Revisions: stacked full-width rev/path inputs with a little breathing room between them. */
 .zp-diffrev .zp-input { margin-bottom: 6px; }
 
-.zp-opts { display: flex; gap: 6px; align-items: center; }
+/* Wraps because Search Documents carries one toggle per format on top of the case/hidden pair —
+   a single unwrapped row would push the last formats out of the modal. */
+.zp-opts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .zp-opt {
   min-width: 30px;
   height: 26px;

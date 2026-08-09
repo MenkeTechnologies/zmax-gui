@@ -74,7 +74,7 @@ zmax-gui/
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
    ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
-   ├─ wiring.test.cjs           what those surfaces actually invoke (PTY geometry, …)
+   ├─ wiring.test.cjs           what those surfaces actually invoke: PTY geometry, document search
    └─ lib/zgui-core             the shared widget library (submodule)
 ```
 
@@ -93,6 +93,14 @@ results are fast and the editor stays the single source of truth.
   **whole-word** toggles; click a match to jump to its exact `line:col`, or **★** to bookmark it.
   **Binary documents are searched too**, in the same query and the same ranked list — see
   [Documents are searchable](#documents-are-searchable) below.
+- **Search Documents** — the documents-only pass (`doc_search.rs`), for when the question is about
+  the documents rather than the code: the walk is restricted to office packages and PDFs up front,
+  and the two things only this pass can express are yours to set — **which formats** (a toggle per
+  `.docx` / `.odt` / `.xlsx` / `.ods` / `.pptx` / `.odp` / `.pdf`; none on means all of them) and
+  whether to **match case**, plus hidden files. Each hit is addressed the way its format is addressed
+  (`¶12`, `Sheet1!B14`, `slide 4`, `p. 7`), and picking one opens the document in the OS handler with
+  that address on the clipboard. No regex toggle: the engines are substring scanners, so the backend
+  rejects a regex query outright rather than matching it literally.
 - **Search & Replace** (`⇧⌘H`) — project-wide replace with **regex** (including `$1` capture
   references), match-case and whole-word; a live **preview** of every before → after line, then
   **Replace All** rewrites the matching files on disk (confirmed first). Oversized files, and
@@ -183,7 +191,9 @@ walker gets a second branch: a file whose extension names a supported format is 
 and contributes hits to the same result list as the source files around it. One query returns hits
 from `main.rs` and from `spec.docx` and from `budget.xlsx` together. There is no subprocess spawn and
 no IPC per file, and document parsing fans out across a thread pool (the text branch stays
-single-threaded and unchanged).
+single-threaded and unchanged). Two commands reach this: **Find in Files**, where document hits join
+the source hits in one ranked list under the grep branch's options, and **Search Documents**, which
+walks only the document formats and lets you pick which of them.
 
 | Format | Search hit locates | Replace |
 |---|---|---|
@@ -199,8 +209,8 @@ rewrite that a parse-and-re-serialize round trip would silently drop.
 Four behaviours differ from the text branch, and each is surfaced in the UI rather than hidden:
 
 - **Literal only.** Every engine `find` is a substring scan, so the document branch is skipped when
-  **regex** or **whole-word** is on, and the standalone document command rejects a regex query
-  outright instead of matching it literally.
+  **regex** or **whole-word** is on, and the standalone **Search Documents** panel rejects a regex
+  query outright instead of matching it literally (it offers no regex toggle at all).
 - **PDF replace matches whole runs, not substrings.** Searching `getUserName` in a PDF whose text run
   reads `getUserNameFromDb` finds the hit and *cannot* rewrite it. Those rows are still listed, with
   an honest `0` and the reason, rather than dropped as a silent no-match.
@@ -499,7 +509,8 @@ two different actions, and with every id unchanged across a locale switch.
 
 `frontend/wiring.test.cjs` is the other half of that: the vocabulary test proves the rows exist, this
 one drives the real `main.js` / `panels.js` against a stubbed Tauri host and asserts what they send
-to Rust — starting with the floating shell's PTY geometry, at spawn and on every later resize.
+to Rust — the floating shell's PTY geometry (at spawn and on every later resize) and the documents
+search with its formats filter.
 
 ## Bundled binaries (self-contained)
 

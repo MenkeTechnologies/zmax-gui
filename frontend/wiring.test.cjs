@@ -1,12 +1,14 @@
 // What the frontend actually invokes, headless.
 //
-// The vocabulary test proves the ⌘K rows exist; this one proves the wiring behind them reaches the
-// Rust commands with the right arguments — regressions a "does it publish" check cannot see, and
-// that stay invisible on screen until you resize or go looking:
+// The vocabulary test proves the ⌘K rows exist; this one proves the wiring behind two of them
+// reaches the Rust commands with the right arguments. Both cases are regressions a "does it
+// publish" check cannot see, and that stay invisible on screen until you resize or go looking:
 //
 //   * the floating shell terminal (main.js) spawned its PTY at xterm's default 80x24 and never
 //     called `shell_term_resize` again, so the kernel kept the boot geometry for the life of the
-//     session and anything full-screen (vim, less, htop) drew to the wrong width.
+//     session and anything full-screen (vim, less, htop) drew to the wrong width;
+//   * `search_documents` (doc_search.rs) — the documents-only pass, the only one with a formats
+//     filter — had no caller at all.
 //
 // The real files run in a vm; only the browser and Tauri surfaces are stubs.
 const test = require("node:test");
@@ -16,6 +18,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const MAIN = path.join(__dirname, "main.js");
+const PANELS = path.join(__dirname, "panels.js");
 
 // A DOM node with a real classList (main.js drives the pane's visibility through it) and recorded
 // listeners, so a test can fire a click or a window resize.
@@ -245,4 +248,74 @@ test("floating shell: closing the pane lets the next open respawn at the current
   const spawns = env.sent("shell_term_spawn");
   assert.equal(spawns.length, 2, "closing the pane must let the next open respawn");
   assert.deepEqual(spawns[1].args, { rows: 30, cols: 100 });
+});
+
+// ── the documents-only search ───────────────────────────────────────────────────────────────────
+
+async function bootPanels(replies) {
+  const env = host([PANELS], { replies: Object.assign({ list_dir: { dir: "/proj" } }, replies || {}) });
+  env.win.ZmaxPanels.mount(env.shell);
+  await tick();
+  return env;
+}
+
+// Open Search Documents from the published vocabulary and type `query` into its picker.
+async function search(env, query) {
+  const item = env.commands().find((c) => c.id === "zmax.panel.searchDocuments");
+  assert.ok(item, "Search Documents is not in the published vocabulary");
+  item.run();
+  await tick();                       // getRoot() resolves, then the modal is built
+  const input = env.of("zp-input")[0];
+  assert.ok(input, "the picker built no search input");
+  input.value = query;
+  input.fire("input");
+  env.flush();                        // the 250ms debounce
+  await tick();
+  return input;
+}
+
+test("documents search: the panel queries search_documents over every supported format", async () => {
+  const env = await bootPanels({
+    search_documents: {
+      hits: [{
+        path: "/proj/q3.xlsx", rel: "q3.xlsx", format: "xlsx", text: "budget",
+        locator: { kind: "cell", sheet: 0, sheet_name: "Sheet1", reference: "B7" },
+      }],
+      truncated: false,
+      errors: [],
+    },
+  });
+  await search(env, "budget");
+
+  const calls = env.sent("search_documents");
+  assert.equal(calls.length, 1, "typing must run exactly one documents search");
+  assert.equal(calls[0].args.root, "/proj");
+  assert.equal(calls[0].args.query, "budget");
+  assert.equal(calls[0].args.opts.formats, null, "no format toggle on means every supported format");
+  assert.equal(calls[0].args.opts.case_insensitive, true, "the 'Match case' toggle is off by default");
+  assert.equal(calls[0].args.opts.regex, undefined, "the engines are substring-only: never send a regex");
+
+  // The hit is rendered as a row addressed by its in-document locator, not by a line number.
+  const rows = env.of("zp-row");
+  assert.equal(rows.length, 1, "the hit was not rendered");
+  assert.ok(rows[0].children.some((c) => c.textContent === "q3.xlsx · Sheet1!B7"),
+    "a spreadsheet hit must be addressed by its cell reference, not a line number");
+  assert.ok(rows[0].children.some((c) => c.textContent === "xlsx"), "the format badge is missing");
+});
+
+test("documents search: the format toggles narrow the pass and re-run it", async () => {
+  const env = await bootPanels({ search_documents: { hits: [], truncated: false, errors: [] } });
+  await search(env, "budget");
+  assert.equal(env.sent("search_documents").length, 1);
+
+  const toggles = env.of("zp-opt").filter((b) => b.textContent === "xlsx" || b.textContent === "pdf");
+  assert.equal(toggles.length, 2, "the per-format toggles were not built");
+  toggles.forEach((b) => b.fire("click"));
+  env.flush();
+  await tick();
+
+  const calls = env.sent("search_documents");
+  assert.ok(calls.length > 1, "flipping a format toggle must re-run the search");
+  assert.deepEqual(calls[calls.length - 1].args.opts.formats, ["xlsx", "pdf"],
+    "the chosen formats are the filter doc_search.rs walks with");
 });

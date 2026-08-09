@@ -9,11 +9,11 @@
 // have to reflow the embedded terminal, which resolves differently in release WebKit. Entry points:
 // the ⌘K command palette (every action) plus ⌘P quick-open, ⌘E recent, ⌘⇧J find-in-files,
 // ⌘⇧E project files, ⌘⇧I snippets, ⌘⇧B git blame, ⌘⇧Y document blame, and the rest (search &
-// replace, go-to-symbol,
+// replace, documents search, go-to-symbol,
 // markers, bookmarks, git changes / history, compare files, project stats) via the palette.
 // The git tools, snippets and project stats are backed by the Rust `git_tools.rs` / `workbench_ext.rs`
-// commands (blame / log / show / stage / unstage / discard / diff, snippet CRUD, code stats), and
-// document blame by `doc_blame.rs`.
+// commands (blame / log / show / stage / unstage / discard / diff, snippet CRUD, code stats),
+// document blame by `doc_blame.rs`, and the documents search by `doc_search.rs`.
 (function () {
   "use strict";
 
@@ -87,16 +87,32 @@
     toast(T("zmax.panel.opened_doc", "Opened") + " " + h.rel + (where ? " · " + where : ""));
   }
 
-  // Picker rows for the `doc_hits` half of a search result. Bookmarks are deliberately absent:
-  // `bookmark_add` takes `{path, line}` and a paragraph index is not a line, so offering the ★
-  // would file a bookmark that jumps to the wrong place.
-  function docRows(res) {
-    return ((res && res.doc_hits) || []).map(function (h) {
+  // Picker rows for a list of document hits. Bookmarks are deliberately absent: `bookmark_add`
+  // takes `{path, line}` and a paragraph index is not a line, so offering the ★ would file a
+  // bookmark that jumps to the wrong place.
+  function docRowsFrom(hits) {
+    return (hits || []).map(function (h) {
       return {
         badge: h.format,
         primary: h.text || "(match)",
         secondary: h.rel + " · " + locatorLabel(h.locator),
         onPick: function () { openDocument(h); },
+      };
+    });
+  }
+  // The `doc_hits` half of an integrated (text + document) search result.
+  function docRows(res) { return docRowsFrom(res && res.doc_hits); }
+
+  // `(path, engine error)` pairs as rows. A document that matched a supported extension and then
+  // failed to parse is surfaced, never dropped — otherwise a corrupt package is indistinguishable
+  // from "no matches".
+  function docErrorRows(pairs) {
+    return (pairs || []).map(function (pair) {
+      return {
+        badge: "!",
+        primary: String(pair[1]),
+        secondary: String(pair[0]),
+        onPick: function () { toast(String(pair[1]), "error"); },
       };
     });
   }
@@ -300,17 +316,7 @@
             });
             // One query, one ranked list: `.docx` / `.xlsx` / `.pptx` / ODF / `.pdf` hits land in
             // the same result list as the source hits, after them so the familiar rows stay put.
-            // A document parse failure is surfaced as a row rather than dropped, otherwise a
-            // corrupt package is indistinguishable from "no matches".
-            var errRows = ((res.doc_errors) || []).map(function (pair) {
-              return {
-                badge: "!",
-                primary: String(pair[1]),
-                secondary: String(pair[0]),
-                onPick: function () { toast(String(pair[1]), "error"); },
-              };
-            });
-            return srcRows.concat(docRows(res), errRows);
+            return srcRows.concat(docRows(res), docErrorRows(res.doc_errors));
           });
         },
       });
@@ -334,6 +340,72 @@
       if (typeof api.onChange === "function") api.onChange();
     });
     return api;
+  }
+
+  // ── documents-only search (doc_search.rs `search_documents`) ────────────────────────────────────
+  // Find in Files reaches documents through the integrated walker, mixed in among the source hits
+  // and governed by the grep branch's options. This is the other entry point: the walk is restricted
+  // to the document formats up front, and the two things only this pass can express — WHICH formats,
+  // and whether to fold case — are the user's to set. Deliberately no regex toggle: the office and
+  // pdf engines are substring scanners, so the backend rejects a regex query rather than silently
+  // matching it literally, and offering the control would only manufacture that error.
+  var DOC_FORMATS = ["docx", "odt", "xlsx", "ods", "pptx", "odp", "pdf"];
+  function searchDocuments() {
+    getRoot().then(function (root) {
+      var controls = document.createElement("div");
+      controls.className = "zp-opts";
+      var ci = optToggle("Aa", T("zmax.panel.case", "Match case"));
+      var hid = optToggle("·*", T("zmax.panel.hidden", "Include hidden files"));
+      controls.appendChild(ci.el);
+      controls.appendChild(hid.el);
+      var fmt = DOC_FORMATS.map(function (ext) {
+        var tog = optToggle(ext, T("zmax.panel.only_format", "Only") + " ." + ext);
+        controls.appendChild(tog.el);
+        return tog;
+      });
+      // No format selected means every supported format (the backend's `formats: null`) — an empty
+      // filter has to mean "don't filter", not "search nothing".
+      function chosenFormats() {
+        var on = fmt.filter(function (tog) { return tog.on; }).map(function (tog) { return tog.el.textContent; });
+        return on.length ? on : null;
+      }
+
+      var truncated = false;
+      var pm = pickerModal({
+        title: T("zmax.panel.search_docs", "Search Documents"),
+        placeholder: T("zmax.panel.search_docs_ph", "Literal text in docx / odt / xlsx / ods / pptx / odp / pdf…"),
+        debounce: 250,
+        controls: controls,
+        countFmt: function (n) {
+          return n + " " + T("zmax.panel.matches", "matches") +
+            (truncated ? " · " + T("zmax.panel.preview_capped", "preview capped") : "");
+        },
+        rowsFor: function (query) {
+          if (!query) { truncated = false; return []; }
+          return invoke("search_documents", {
+            root: root,
+            query: query,
+            opts: {
+              case_insensitive: !ci.on,   // toggle labelled "Match case" → OFF means case-insensitive
+              show_hidden: hid.on,
+              formats: chosenFormats(),
+              max_results: 2000,
+            },
+          }).then(function (res) {
+            truncated = !!(res && res.truncated);
+            return docRowsFrom(res && res.hits).concat(docErrorRows(res && res.errors));
+          }, function (err) {
+            truncated = false;
+            toast(String(err), "error");
+            return [];
+          });
+        },
+      });
+      if (!pm) return;
+      ci.onChange = pm.refresh;
+      hid.onChange = pm.refresh;
+      fmt.forEach(function (tog) { tog.onChange = pm.refresh; });
+    });
   }
 
   // ── ⌘E recent files ─────────────────────────────────────────────────────────────────────────────
@@ -1829,6 +1901,7 @@
     return [
       { id: "zmax.panel.quickOpen", label: P + T("zmax.panel.quick_open", "Quick Open") + "  ⌘P", run: quickOpen },
       { id: "zmax.panel.findInFiles", label: P + T("zmax.panel.find_in_files", "Find in Files") + "  ⇧⌘J", run: findInFiles },
+      { id: "zmax.panel.searchDocuments", label: P + T("zmax.panel.search_docs", "Search Documents"), run: searchDocuments },
       { id: "zmax.panel.searchReplace", label: P + T("zmax.panel.search_replace", "Search & Replace") + "  ⇧⌘H", run: searchReplace },
       { id: "zmax.panel.gotoSymbol", label: P + T("zmax.panel.goto_symbol", "Go to Symbol") + "  ⇧⌘O", run: gotoSymbol },
       { id: "zmax.panel.findDefinition", label: P + T("zmax.panel.find_def", "Find Definition") + "  ⇧⌘D", run: findDefinition },
