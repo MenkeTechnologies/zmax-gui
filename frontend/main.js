@@ -102,7 +102,35 @@
     (function () {
       var T = window.__TAURI__;
       if (!T || !T.core || !T.event || typeof window.Terminal !== "function") return;
-      var pane = null, term = null, spawned = false, listening = false;
+      var pane = null, body = null, term = null, spawned = false, listening = false;
+      var lastRows = 0, lastCols = 0, fitTimer = null;
+
+      // Pane geometry → rows/cols, through the SAME cell-metric maths the shared embedded terminal
+      // uses for its own PTY (zpwr-embed-terminal exports it as window.zpwrTermFit). Re-deriving it
+      // here would let the two terminals disagree about what a cell is. It also resizes `term`, so
+      // the xterm and the PTY are told the same geometry. Falls back to the current xterm size when
+      // the export is missing (a host serving an older terminal.js) — never guesses at the maths.
+      function fit() {
+        if (!term) return { rows: 24, cols: 80 };
+        if (typeof window.zpwrTermFit === "function" && body) {
+          try { return window.zpwrTermFit(term, body); } catch (e) { /* fall through to the xterm's own size */ }
+        }
+        return { rows: term.rows || 24, cols: term.cols || 80 };
+      }
+
+      // Push the current fit to the floating shell's PTY. Without this the kernel keeps the boot
+      // geometry for the life of the session and anything full-screen (vim, less, htop) draws to the
+      // wrong width. Only sent when the fit actually changed, so a window resize that the pane's
+      // max-width/max-height clamp absorbs costs nothing.
+      function sendResize() {
+        if (!spawned || !term) return;
+        var d = fit();
+        if (d.rows === lastRows && d.cols === lastCols) return;
+        lastRows = d.rows; lastCols = d.cols;
+        T.core.invoke("shell_term_resize", { rows: d.rows, cols: d.cols }).catch(function () {});
+      }
+      function scheduleResize() { clearTimeout(fitTimer); fitTimer = setTimeout(sendResize, 60); }
+
       function ensure() {
         if (pane) return;
         pane = document.createElement("div");
@@ -114,25 +142,56 @@
           '<div class="term-toolbar-actions">' +
           '<button class="term-btn" data-a="hide" title="Hide">—</button>' +
           '<button class="term-btn term-btn-close" data-a="close" title="Close">✕</button></div>';
-        var body = document.createElement("div");
+        body = document.createElement("div");
         body.className = "term-body";
         pane.append(head, body);
         document.body.appendChild(pane);
         head.addEventListener("click", function (e) {
           var a = e.target && e.target.getAttribute && e.target.getAttribute("data-a");
           if (a === "hide") { pane.classList.remove("active"); }
-          else if (a === "close") { try { T.core.invoke("shell_term_kill"); } catch (x) {} spawned = false; pane.classList.remove("active"); }
+          else if (a === "close") {
+            try { T.core.invoke("shell_term_kill"); } catch (x) {}
+            spawned = false; lastRows = 0; lastCols = 0;
+            pane.classList.remove("active");
+          }
         });
+      }
+
+      // The xterm is created only once the pane is visible: .terminal-pane is display:none until
+      // .active, and xterm measures its cell box at open() time — opening it inside a hidden pane
+      // leaves the renderer with no dimensions, so the first fit would be a guess.
+      function attach() {
+        if (term) return;
         term = new window.Terminal({ fontFamily: "'Hack Nerd Font', Menlo, monospace", fontSize: 13, cursorBlink: true, theme: { background: "rgba(0,0,0,0)" } });
         term.open(body);
         term.onData(function (d) { try { T.core.invoke("shell_term_write", { data: d }); } catch (x) {} });
         if (!listening) { listening = true; T.event.listen("shell-term-output", function (ev) { if (term) term.write(ev.payload); }); }
+        // Covers every way the pane can change size: the window resize the max-width/max-height
+        // clamp passes through, a show (0 → laid out), and a future drag-resize handle.
+        if (typeof ResizeObserver === "function") new ResizeObserver(scheduleResize).observe(body);
+        window.addEventListener("resize", scheduleResize);
       }
+
       window.toggleTerminalPopup = function () {
         ensure();
         if (pane.classList.contains("active")) { pane.classList.remove("active"); return; }
         pane.classList.add("active");
-        if (!spawned) { spawned = true; T.core.invoke("shell_term_spawn", { rows: term.rows || 24, cols: term.cols || 80 }).catch(function () {}); }
+        attach();
+        var needSpawn = !spawned;
+        if (needSpawn) spawned = true;
+        // One frame after .active so the pane has a laid-out box to measure: the first PTY gets the
+        // geometry it will actually be drawn at, instead of xterm's 80x24 default.
+        requestAnimationFrame(function () {
+          var d = fit();
+          if (needSpawn) {
+            lastRows = d.rows; lastCols = d.cols;
+            T.core.invoke("shell_term_spawn", { rows: d.rows, cols: d.cols }).catch(function () {});
+          } else {
+            sendResize();
+          }
+        });
+        // Focus after the pane has settled, as before — xterm's textarea is not reliably focusable
+        // in the same frame it was laid out in.
         setTimeout(function () { try { term.focus(); } catch (x) {} }, 40);
       };
 

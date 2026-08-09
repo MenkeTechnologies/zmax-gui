@@ -36,7 +36,8 @@ rlibs so that project search, replace and git blame can see inside binary docume
 ```
 zmax-gui/
 ├─ app/src-tauri/        Tauri host: terminal + fs + window + open-intake + project commands
-│   ├─ terminal.rs       PTY spawn/write/resize/kill
+│   ├─ terminal.rs       PTY spawn/write/resize/kill — the editor's, the floating shell's, and
+│   │                    one per tmux tile
 │   ├─ fs_ops.rs         list_dir/home_dir — backs the Open dialog
 │   ├─ window_ops.rs     fullscreen / translucency (blur) / focus
 │   ├─ project.rs        fuzzy find-files, find-in-files (regex), tree file ops, recent files,
@@ -73,6 +74,7 @@ zmax-gui/
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
    ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
+   ├─ wiring.test.cjs           what those surfaces actually invoke (PTY geometry, …)
    └─ lib/zgui-core             the shared widget library (submodule)
 ```
 
@@ -443,6 +445,12 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   (`term_session_*`), with the editor exec'd into it exactly as the fullscreen one is. `C-b` is the
   prefix (`C-b c` new window, `%` / `"` split), and the always-on editor pane hides while the overlay
   is up.
+- **Floating shell** (`⌘K` ▸ Terminal) — a scratch login shell in its own pane on top of the IDE, on
+  its own PTY (`shell_term_*`), so it never disturbs the editor's. Its geometry tracks the pane:
+  the PTY is spawned at the size the pane is actually drawn at and re-sized whenever that changes,
+  through the same cell-metric fit the embedded terminal uses for its own PTY
+  (`zpwr-embed-terminal`'s `window.zpwrTermFit`), so full-screen programs — `vim`, `less`, `htop` —
+  draw to the right width instead of to the geometry the pane happened to have at boot.
 - **Open / Save As / Help** dialogs (`ZGui.modal` + `ZGui.tree` file browser).
 - **Right-click context menu** in the editor (`ZGui.contextMenu`).
 - **Drag-and-drop** files to open (`ZGui.fileDrag`).
@@ -488,6 +496,10 @@ a translated string, so switching language would rename every verb and break eve
 command chain that referenced one. `frontend/vocabulary.test.cjs` drives the three real publishers
 headlessly and pins all of it: the union is published, through `setCommands`, with no id claimed by
 two different actions, and with every id unchanged across a locale switch.
+
+`frontend/wiring.test.cjs` is the other half of that: the vocabulary test proves the rows exist, this
+one drives the real `main.js` / `panels.js` against a stubbed Tauri host and asserts what they send
+to Rust — starting with the floating shell's PTY geometry, at spawn and on every later resize.
 
 ## Bundled binaries (self-contained)
 
