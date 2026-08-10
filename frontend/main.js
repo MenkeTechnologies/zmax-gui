@@ -33,6 +33,17 @@
 
   function boot() {
     if (!window.ZGui || typeof ZGui.appShell !== "function") return;
+    // The appShell audits every published vocabulary and records the two silent miswirings it can
+    // see — a ⌘K row with no id (listed in the palette but never reachable as an `appshell.<id>`
+    // verb) and an id containing whitespace (a translated label used as an id, which renames itself
+    // on a locale change and breaks every saved chain). It never prints them. Forward each to
+    // zmax.log, the file the Diagnostics "Open log file" button reveals. Armed BEFORE the mount,
+    // because the shell publishes its first vocabulary while constructing. No console output.
+    document.addEventListener("zgui:diagnostic", function (e) {
+      var d = (e && e.detail) || {}, TA = window.__TAURI__;
+      if (TA && TA.core && typeof TA.core.invoke === "function")
+        TA.core.invoke("log_diagnostic", { source: String(d.source || "zgui"), message: String(d.message || "") }).catch(function () {});
+    });
     var shell = ZGui.appShell(document.getElementById("app"), {
       brand: { branch: "app", title: "ZMAX", subtitle: T("zmax.shell.subtitle", "editor") },
       filterPlaceholder: T("zmax.shell.filter", "Filter…"),

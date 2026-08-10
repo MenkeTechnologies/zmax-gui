@@ -137,11 +137,14 @@ pub static COMMANDS: &[&str] = &[
     "zmax_exec_command",
 ];
 
-/// Registered commands deliberately withheld from the bus. These are the automation bridge's own
-/// plumbing: `zgui_bridge_reply` fulfils a pending forwarded request by id and `zgui_bridge_event`
-/// republishes an event to bus subscribers. Both are called *by* the bridge; letting a script call
-/// them would let it resolve another caller's in-flight request or forge an event.
-pub static NOT_ON_BUS: &[&str] = &["zgui_bridge_event", "zgui_bridge_reply"];
+/// Registered commands deliberately withheld from the bus. Two of them are the automation bridge's
+/// own plumbing: `zgui_bridge_reply` fulfils a pending forwarded request by id and
+/// `zgui_bridge_event` republishes an event to bus subscribers. Both are called *by* the bridge;
+/// letting a script call them would let it resolve another caller's in-flight request or forge an
+/// event. `log_diagnostic` is the appShell's diagnostics sink — the webview's one-way path for the
+/// miswiring notes the shell records instead of printing. It reports on the app, so exposing it as
+/// a verb would only let a script write arbitrary lines into the app's own log.
+pub static NOT_ON_BUS: &[&str] = &["log_diagnostic", "zgui_bridge_event", "zgui_bridge_reply"];
 
 #[cfg(test)]
 mod tests {

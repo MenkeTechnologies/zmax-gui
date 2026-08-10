@@ -41,6 +41,24 @@ impl Default for SysMon {
         }
     }
 }
+/// Append a webview-side diagnostic to `zmax.log` — the same file the appShell Diagnostics
+/// "Open log file" button reveals (`app_log_dir()/<brand title>.log`, brand title `ZMAX`).
+/// `ZGui.appShell` audits every published command vocabulary for the two silent miswirings it can
+/// detect — a ⌘K row with no id (so it can never become an `appshell.<id>` verb) and an id
+/// containing whitespace (the fingerprint of a translated label used as an id, which renames
+/// itself on a locale change and strands every saved chain) — and deliberately prints nothing.
+/// This is where the frontend forwards them: to the log file, never the console, per the fleet's
+/// no-terminal-chatter rule. Failures are ignored; logging is never load-bearing.
+#[tauri::command]
+fn log_diagnostic(app: tauri::AppHandle, source: String, message: String) {
+    use std::io::Write;
+    use tauri::Manager;
+    let Ok(dir) = app.path().app_log_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("zmax.log")) else { return };
+    let _ = writeln!(f, "[{source}] {message}");
+}
+
 /// System stats for the powerline (real per-second deltas via persistent handles).
 #[tauri::command]
 fn sys_stats(state: tauri::State<'_, std::sync::Mutex<SysMon>>) -> serde_json::Value {
@@ -108,6 +126,7 @@ pub fn run() {
             account_client::tauri_plugin::licence_sign_in,
             account_client::tauri_plugin::licence_sign_out,
             sys_stats,
+            log_diagnostic,
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,

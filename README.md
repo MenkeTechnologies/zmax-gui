@@ -488,9 +488,10 @@ is published over two routes and `verbs()` returns their union:
 
 `commands.rs` is the host list, and `NOT_ON_BUS` is its explicit exception list — the bridge's own
 `zgui_bridge_reply` / `zgui_bridge_event` plumbing, withheld because a script that could reach them
-would be able to resolve another caller's in-flight request or forge an event. A drift-guard test
-requires every registered command to appear in exactly one of the two lists, so adding a command
-forces a deliberate decision instead of a silent omission.
+would be able to resolve another caller's in-flight request or forge an event, plus `log_diagnostic`
+(below), which reports *on* the app rather than driving it. A drift-guard test requires every
+registered command to appear in exactly one of the two lists, so adding a command forces a
+deliberate decision instead of a silent omission.
 
 The webview half turns on one detail. The appShell registers an `appshell.<id>` verb for each
 command published through **`setCommands`**; its older `setPaletteItems` entry point fills the `⌘K`
@@ -506,6 +507,15 @@ a translated string, so switching language would rename every verb and break eve
 command chain that referenced one. `frontend/vocabulary.test.cjs` drives the three real publishers
 headlessly and pins all of it: the union is published, through `setCommands`, with no id claimed by
 two different actions, and with every id unchanged across a locale switch.
+
+The toolkit checks the same two rules from its side. On every publish the appShell audits the
+vocabulary for a row with **no id** (it shows in `⌘K` but can never become an `appshell.<id>` verb)
+and for an id containing **whitespace** (the fingerprint of a translated label used as an id), and
+records what it finds in `window.ZGui.diagnostics` and on a `zgui:diagnostic` document event. It
+prints nothing. `main.js` forwards each note to the `log_diagnostic` host command, which appends it
+to `zmax.log` — the file the Settings ▸ Diagnostics **Open log file** button reveals. Nothing reaches
+the terminal. zmax-gui's own vocabulary raises none of them — every published row carries a stable
+`zmax.*` id — so the channel is there for a future regression, not for a current one.
 
 `frontend/wiring.test.cjs` is the other half of that: the vocabulary test proves the rows exist, this
 one drives the real `main.js` / `panels.js` against a stubbed Tauri host and asserts what they send

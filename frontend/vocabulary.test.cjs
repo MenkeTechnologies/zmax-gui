@@ -49,6 +49,8 @@ function boot(opts) {
     setPaletteItems(list) { paletteCalls.push(list); },
   };
 
+  // Every `log_diagnostic` invoke the app makes — the appShell's diagnostics forwarding.
+  const logged = [];
   const win = {
     ZGui: {
       appShell: () => shell,
@@ -56,15 +58,26 @@ function boot(opts) {
       palette: { register() {} },
     },
     addEventListener() {},
+    __TAURI__: {
+      core: {
+        invoke(cmd, args) {
+          if (cmd === "log_diagnostic") logged.push(args);
+          return Promise.resolve();
+        },
+      },
+    },
     t: opts.t,
   };
+  // Records document listeners so a test can fire the events the app subscribes to.
+  const docListeners = {};
   const doc = {
     body: el(),
     documentElement: el(),
     head: el(),
     getElementById: () => null,
     createElement: () => el(),
-    addEventListener() {},
+    addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
+    dispatchEvent(ev) { (docListeners[ev.type] || []).forEach((fn) => fn(ev)); return true; },
     querySelector: () => null,
     readyState: "complete",
   };
@@ -79,10 +92,11 @@ function boot(opts) {
     localStorage: { getItem: () => null, setItem() {} },
     console,
   };
+  ctx.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = (init && init.detail) || null; } };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   for (const f of [MENU, PANELS, MAIN]) vm.runInContext(fs.readFileSync(f, "utf8"), ctx);
-  return { win, shell, commandCalls, paletteCalls, published: commandCalls[commandCalls.length - 1] || [] };
+  return { win, doc, shell, logged, commandCalls, paletteCalls, published: commandCalls[commandCalls.length - 1] || [] };
 }
 
 test("vocabulary: the app publishes through setCommands, never the palette-only path", () => {
@@ -143,4 +157,13 @@ test("vocabulary: a locale switch re-publishes the union, not just the menu", ()
   for (const id of ["zmax.tmux", "zmax.save", "zmax.panel.quickOpen"]) {
     assert.ok(ids.has(id), `${id} was lost when the locale changed`);
   }
+});
+
+test("vocabulary: an appShell diagnostic reaches the log file, not the console", () => {
+  const env = boot();
+  // The shell records a miswired row (no id, or an id derived from a translated label) in
+  // ZGui.diagnostics and fires `zgui:diagnostic` — it never prints. Nothing reads that buffer unless
+  // the app forwards it, so an unwired app loses every warning the toolkit produces for it.
+  env.doc.dispatchEvent({ type: "zgui:diagnostic", detail: { source: "appShell", message: "row has no id" } });
+  assert.deepEqual(env.logged, [{ source: "appShell", message: "row has no id" }]);
 });
