@@ -130,6 +130,45 @@
     return function () { var a = arguments, self = this; clearTimeout(t); t = setTimeout(function () { fn.apply(self, a); }, ms); };
   }
 
+  // ── R7: one fuzzy matcher, one highlight style ─────────────────────────────────────────────────
+  // Every filter in this file goes through the SHARED `ZGui.fzf` — the same matcher the ⌘K palette,
+  // the file browser and every sibling app use — so a query ranks and highlights identically
+  // wherever it is typed. A local `indexOf` filter would silently be a *different* search from the
+  // one two keystrokes away in the palette, which is what R7 exists to prevent.
+  function fzf() { return window.ZGui && window.ZGui.fzf; }
+
+  /**
+   * Rank `items` against `query`, keeping only matches, best first.
+   *   fieldsOf(item) -> [string, …]   first field is the primary one (it carries the fzf name bonus)
+   * Falls back to the unfiltered list when zgui-core is absent (headless tests), never to a second
+   * matcher.
+   */
+  function fuzzyRank(query, items, fieldsOf) {
+    var list = items || [];
+    var q = String(query || "").trim();
+    if (!q) return list.slice();
+    var f = fzf();
+    if (!f || typeof f.searchScore !== "function") return list.slice();
+    var scored = [];
+    for (var i = 0; i < list.length; i++) {
+      var score = f.searchScore(q, fieldsOf(list[i]).map(function (x) { return String(x == null ? "" : x); }));
+      if (score > 0) scored.push({ item: list[i], score: score, i: i });
+    }
+    // Stable: equal scores keep input order, so a re-render never reshuffles rows under the cursor.
+    scored.sort(function (a, b) { return b.score - a.score || a.i - b.i; });
+    return scored.map(function (s) { return s.item; });
+  }
+
+  /** Write `text` into `el` with the query's matched characters wrapped (`<mark class="fzf-hl">`). */
+  function setFuzzyText(el, text, query) {
+    var s = String(text == null ? "" : text);
+    var q = String(query || "").trim();
+    var f = fzf();
+    if (!q || !f || typeof f.highlightMatch !== "function") { el.textContent = s; return; }
+    // highlightMatch escapes the text itself (fzf.js escapeHtml), so this cannot inject markup.
+    el.innerHTML = f.highlightMatch(s, q);
+  }
+
   // ── a reusable "search input + keyboard-navigable result list" modal ────────────────────────────
   // rowsFor(query) -> Promise<[{ primary, secondary, onPick }]>; the list handles ↑/↓/Enter/click.
   function pickerModal(opts) {
@@ -158,6 +197,10 @@
 
     var rows = [];      // [{ el, onPick }]
     var sel = -1;
+    // The query the currently rendered rows were produced for — R7's matched-character highlight is
+    // drawn against it, so it must be captured at refresh time, not read back out of the input
+    // (which the user may already have typed into again while the rows were in flight).
+    var shownQuery = "";
 
     function highlight() {
       rows.forEach(function (r, i) { r.el.classList.toggle("active", i === sel); });
@@ -171,12 +214,12 @@
         row.className = "zp-row";
         var p = document.createElement("span");
         p.className = "zp-row-primary";
-        p.textContent = it.primary;
+        setFuzzyText(p, it.primary, it.noHighlight ? "" : shownQuery);
         row.appendChild(p);
         if (it.secondary) {
           var s = document.createElement("span");
           s.className = "zp-row-secondary";
-          s.textContent = it.secondary;
+          setFuzzyText(s, it.secondary, it.noHighlight ? "" : shownQuery);
           row.appendChild(s);
         }
         if (it.badge) {
@@ -210,6 +253,9 @@
     var refresh = debounce(function () {
       var val = box.get ? box.get() : (input ? input.value : "");
       var extra = box.getRegex ? { regex: box.getRegex() } : {};
+      // A regex query is not a fuzzy query — highlighting its literal characters would mark the
+      // wrong ones — so the matched-char highlight is suppressed while the regex toggle is on.
+      shownQuery = extra.regex ? "" : val;
       Promise.resolve(opts.rowsFor(val, extra)).then(render, function () { render([]); });
     }, opts.debounce != null ? opts.debounce : 120);
 
@@ -420,8 +466,7 @@
           { label: T("zmax.dialog.cancel", "Cancel"), close: true },
         ],
         rowsFor: function (query) {
-          var q2 = (query || "").toLowerCase();
-          return (paths || []).filter(function (p) { return !q2 || p.toLowerCase().indexOf(q2) >= 0; }).map(function (p) {
+          return fuzzyRank(query, paths || [], function (p) { return [p.slice(p.lastIndexOf("/") + 1), p]; }).map(function (p) {
             var slash = p.lastIndexOf("/");
             return {
               primary: slash >= 0 ? p.slice(slash + 1) : p,
@@ -960,8 +1005,7 @@
       ],
       rowsFor: function (query) {
         return invoke("snippet_list").then(function (list) {
-          var qq = (query || "").toLowerCase();
-          return (list || []).filter(function (s) { return !qq || (s.name + " " + s.body).toLowerCase().indexOf(qq) >= 0; }).map(function (s) {
+          return fuzzyRank(query, list || [], function (s) { return [s.name, s.body]; }).map(function (s) {
             return {
               primary: s.name,
               secondary: s.body.replace(/\n/g, "⏎").slice(0, 80),
@@ -1150,8 +1194,7 @@
         rowsFor: function (query) {
           var p = cache ? Promise.resolve(cache) : invoke("project_symbols", { root: root, limit: 5000 }).then(function (s) { cache = s; return s; });
           return p.then(function (syms) {
-            var qq = (query || "").toLowerCase();
-            return (syms || []).filter(function (s) { return !qq || s.name.toLowerCase().indexOf(qq) >= 0; }).slice(0, 500).map(function (s) {
+            return fuzzyRank(query, syms || [], function (s) { return [s.name, s.kind, s.rel]; }).slice(0, 500).map(function (s) {
               return { badge: s.kind, primary: s.name, secondary: s.rel + ":" + s.line, onPick: function () { openInEditor(s.path, s.line, s.col); } };
             });
           });
@@ -1172,8 +1215,7 @@
         rowsFor: function (query) {
           var p = cache ? Promise.resolve(cache) : invoke("scan_markers", { root: root, limit: 5000 }).then(function (m) { cache = m; return m; });
           return p.then(function (ms) {
-            var qq = (query || "").toLowerCase();
-            return (ms || []).filter(function (m) { return !qq || (m.kind + " " + m.text + " " + m.rel).toLowerCase().indexOf(qq) >= 0; }).slice(0, 800).map(function (m) {
+            return fuzzyRank(query, ms || [], function (m) { return [m.text, m.kind, m.rel]; }).slice(0, 800).map(function (m) {
               return { badge: m.kind, primary: m.text || "(" + m.kind + ")", secondary: m.rel + ":" + m.line, onPick: function () { openInEditor(m.path, m.line, m.col); } };
             });
           });
@@ -1226,8 +1268,7 @@
       ],
       rowsFor: function (query) {
         return invoke("bookmark_list").then(function (list) {
-          var qq = (query || "").toLowerCase();
-          return (list || []).filter(function (b) { return !qq || (b.label + " " + b.path).toLowerCase().indexOf(qq) >= 0; }).map(function (b) {
+          return fuzzyRank(query, list || [], function (b) { return [b.label, b.path]; }).map(function (b) {
             var slash = b.path.lastIndexOf("/");
             return {
               primary: b.label,
@@ -1266,8 +1307,7 @@
         ],
         rowsFor: function (query) {
           return invoke("git_branches", { root: root }).then(function (list) {
-            var qq = (query || "").toLowerCase();
-            return (list || []).filter(function (b) { return !qq || (b.name + " " + b.subject).toLowerCase().indexOf(qq) >= 0; }).map(function (b) {
+            return fuzzyRank(query, list || [], function (b) { return [b.name, b.subject]; }).map(function (b) {
               return {
                 badge: b.current ? "●" : "",
                 primary: b.name,
@@ -1919,6 +1959,12 @@
       { id: "zmax.panel.alignColumns", label: P + T("zmax.panel.align_columns", "Align Columns"), run: alignColumns },
       { id: "zmax.panel.commentToggle", label: P + T("zmax.panel.comment_toggle", "Comment / Uncomment") + "  ⇧⌘/", run: commentToggle },
       { id: "zmax.panel.fileEncoding", label: P + T("zmax.panel.file_encoding", "File Encoding"), run: fileEncoding },
+      // R9: the shared zpwr-clip-engine arrangement grid, driven by zmax-gui's plan domain. Lives in
+      // plan-panel.js (like the file browser, it loads its ES-module engine lazily on first open).
+      {
+        id: "zmax.panel.batchPlan", label: P + T("zmax.plan.title", "Batch Plan"),
+        run: function () { if (window.ZmaxPlan && typeof ZmaxPlan.open === "function") ZmaxPlan.open(); },
+      },
       { id: "zmax.panel.gitChanges", label: G + T("zmax.panel.git_changes", "Git Changes"), run: gitPanel },
       { id: "zmax.panel.gitBlame", label: G + T("zmax.panel.blame", "Blame") + "  ⇧⌘B", run: function () { gitBlame(); } },
       { id: "zmax.panel.docBlame", label: G + T("zmax.panel.doc_blame", "Document Blame") + "  ⇧⌘Y", run: function () { docBlame(); } },
@@ -2006,5 +2052,8 @@
     }, false);
   }
 
-  window.ZmaxPanels = { mount: mount };
+  // `openInEditor` is exported because the bus's `zmax.editor.open` verb (verbs.js) must drive the
+  // editor through the SAME bridge the panels use — a second `:open` writer would drift from this
+  // one's quoting and recent-files bookkeeping.
+  window.ZmaxPanels = { mount: mount, openInEditor: openInEditor };
 })();

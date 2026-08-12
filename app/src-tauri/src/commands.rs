@@ -132,6 +132,13 @@ pub static COMMANDS: &[&str] = &[
     "terminal_spawn",
     "terminal_write",
     "toggle_fullscreen",
+    // Compensation snapshots (txn.rs). On the bus deliberately: a script that drives a mutation
+    // through a raw command rather than through its reversible verb still needs a way to take, and
+    // hand back, the pre-state — and `txn_list` is how a stranded snapshot becomes visible.
+    "txn_discard",
+    "txn_list",
+    "txn_restore",
+    "txn_snapshot",
     "zgui_reveal_scripts",
     "zgui_write_scripts",
     "zmax_exec_command",

@@ -19,6 +19,7 @@ mod sidecar;
 mod stryke_lsp;
 mod terminal;
 mod text_tools;
+mod txn;
 mod window_ops;
 mod workbench_ext;
 
@@ -210,6 +211,12 @@ pub fn run() {
             // Encoding ops (panels.js): detect + transcode a file's character encoding.
             encoding_ops::detect_encoding,
             encoding_ops::convert_encoding,
+            // Reversible mutations (verbs.js): content snapshots that let a file-rewriting bus verb
+            // declare `rev: "inverse"` and actually compensate on a transaction abort.
+            txn::txn_snapshot,
+            txn::txn_restore,
+            txn::txn_discard,
+            txn::txn_list,
             // Git more (panels.js): repo-wide log, show-commit, diff two revisions, commit graph.
             git_more::git_log_repo,
             git_more::git_show_commit,

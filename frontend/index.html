@@ -318,6 +318,17 @@
   <!-- app-local project workbench (quick-open, find-in-files, recent, project files, git); before main.js -->
   <script src="panels.js"></script>
 
+  <!-- R9: the Batch Plan — the shared zpwr-clip-engine arrangement grid over zmax-gui's plan domain
+       (plan-domain.js). The grid engine is an ES module tree, imported lazily on first open, so this
+       classic script only carries the host wiring + the transactional runner. -->
+  <script src="plan-panel.js"></script>
+
+  <!-- the TYPED automation-bus surface: the workbench's Rust commands published as parameterised
+       verbs with declared reversibility, so a stryke transaction can run project mutations and
+       compensate them on abort. After automation.js (it registers into ZGui.automation) and after
+       panels.js (zmax.editor.open drives ZmaxPanels.openInEditor); before main.js installs the host. -->
+  <script src="verbs.js"></script>
+
   <!-- mount: appShell + menu bar + a fullscreen terminal that execs the zmax editor -->
   <script src="main.js"></script>
   <!-- tmux tiling mode: drives ZGui.tmux with an independent xterm+PTY zmax editor per pane -->
