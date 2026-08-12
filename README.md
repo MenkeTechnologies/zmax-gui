@@ -1,10 +1,10 @@
 ```
-███████╗███████╗███╗   ███╗ █████╗  ██████╗███████╗       ██████╗ ██╗   ██╗██╗
-╚══███╔╝██╔════╝████╗ ████║██╔══██╗██╔════╝██╔════╝      ██╔════╝ ██║   ██║██║
-  ███╔╝ █████╗  ██╔████╔██║███████║██║     ███████╗█████╗██║  ███╗██║   ██║██║
- ███╔╝  ██╔══╝  ██║╚██╔╝██║██╔══██║██║     ╚════██║╚════╝██║   ██║██║   ██║██║
-███████╗███████╗██║ ╚═╝ ██║██║  ██║╚██████╗███████║      ╚██████╔╝╚██████╔╝██║
-╚══════╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝       ╚═════╝  ╚═════╝ ╚═╝
+███████╗███╗   ███╗ █████╗ ██╗  ██╗      ██████╗ ██╗   ██╗██╗
+╚══███╔╝████╗ ████║██╔══██╗╚██╗██╔╝     ██╔════╝ ██║   ██║██║
+  ███╔╝ ██╔████╔██║███████║ ╚███╔╝█████╗██║  ███╗██║   ██║██║
+ ███╔╝  ██║╚██╔╝██║██╔══██║ ██╔██╗╚════╝██║   ██║██║   ██║██║
+███████╗██║ ╚═╝ ██║██║  ██║██╔╝ ██╗     ╚██████╔╝╚██████╔╝██║
+╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝      ╚═════╝  ╚═════╝ ╚═╝
 ```
 
 ![Rust](https://img.shields.io/badge/Rust-2021-05d9e8?style=flat-square)
@@ -54,7 +54,8 @@ zmax-gui/
 │   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
 │   ├─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 │   ├─ bus.rs            GUI Automation Bus socket: host commands + webview appshell.* verbs
-│   └─ commands.rs       the host command list the bus advertises (+ its withheld exceptions)
+│   ├─ commands.rs       the host command list the bus advertises (+ its withheld exceptions)
+│   └─ txn.rs            content snapshots — what makes a file-mutating bus verb reversible
 ├─ crates/
 │   ├─ zmax            the editor — vendored submodule, built → bundled sidecar
 │   ├─ zpwr-embed-terminal   shared PTY engine (submodule)
@@ -65,6 +66,9 @@ zmax-gui/
 ├─ scripts/
 │   ├─ mvim              terminal launcher (open files in the running window)
 │   ├─ copy-{webui,embed-terminal,i18n,file-browser}.mjs   sync shared webui into frontend/
+│   ├─ clean/bust/rebuild/nuke/ship-check/deploy.sh        the shared app lifecycle scripts
+│   ├─ run-js-tests.mjs   one discovery path for every JS suite (pnpm test + test:js)
+│   ├─ i18n-{sort-catalogs,catalog-audit}.mjs   catalog sort + read-only completeness audit
 │   └─ prepare-{zmax,stryke}-sidecar.mjs   stage the bundled binaries
 └─ frontend/
    ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
@@ -73,9 +77,13 @@ zmax-gui/
    ├─ editor-hud.js             buffer/tab bar + status strip + minimap, driven by that state
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
+   ├─ verbs.js                  the TYPED bus surface: the workbench as reversible verbs
+   ├─ plan-panel.js             Batch Plan: the shared arrangement grid + the transactional runner
+   ├─ plan-domain.js            its grid DOMAIN (operations × files) for zpwr-clip-engine
    ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
    ├─ wiring.test.cjs           what those surfaces actually invoke: PTY geometry, document search
-   └─ lib/zgui-core             the shared widget library (submodule)
+   ├─ lib/zgui-core             the shared widget library (submodule)
+   └─ lib/zpwr-clip-engine      the shared arrangement-grid engine (submodule)
 ```
 
 ## Project workbench
@@ -177,6 +185,15 @@ results are fast and the editor stays the single source of truth.
   working tree (including untracked) with an optional message.
 - **Project Stats** — a read-only report of file / line / byte counts across the tree, broken down by
   extension (binary and oversized files skipped for line counting).
+- **Batch Plan** — the shared arrangement grid over the project: paint which of the reversible
+  operations to apply to which files, then run the whole painting as **one transaction** that rolls
+  every applied step back if any step fails. See
+  [Batch Plan](#batch-plan-paint-the-refactor-run-it-as-one-transaction).
+
+Every list, picker and filter in these panels is the **shared fzf matcher** (`ZGui.fzf`) with the
+matched characters highlighted — the same ranking and the same highlight as the `⌘K` palette and the
+file browser, so a query means the same thing wherever it is typed. (The highlight is suppressed
+while a panel's regex toggle is on: marking a regex's literal characters would mark the wrong ones.)
 
 All surfaces are modal overlays (like the Open dialog) built from zgui-core widgets — no docked pane,
 so the embedded terminal is never reflowed.
@@ -522,6 +539,57 @@ one drives the real `main.js` / `panels.js` against a stubbed Tauri host and ass
 to Rust — the floating shell's PTY geometry (at spawn and on every later resize) and the documents
 search with its formats filter.
 
+### Reversible verbs: a refactor is a transaction
+
+The two routes above describe *what* a script can reach. This section is about what happens when a
+step fails halfway.
+
+The bus classifies every verb as `pure`, `inverse` or `irreversible`, and a transaction **decides on
+that classification**: an `inverse` verb is journaled so it can be compensated, an `irreversible` one
+is refused before it runs. A palette row declares nothing, so it defaults to `irreversible` — right
+for a button, and a ceiling: it means a multi-step project edit driven from a script either succeeds
+or is left half-applied.
+
+`frontend/verbs.js` publishes the workbench itself as a **typed, parameterised** surface on top of
+that: reads and previews as `pure`, and every file mutation as `inverse` with a real `undo()`.
+
+| Class | Verbs | Compensation |
+| --- | --- | --- |
+| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, and every `*.preview` dry run | none needed — nothing is written |
+| `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
+| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
+| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop}`, `zmax.editor.{open,ex}` | none — repository-wide state, or the editor's own buffers |
+
+A mutating verb learns the exact paths it is about to touch **from its own dry run**, snapshots
+those, then applies. So `zmax.replace.apply` snapshots the files its preview named — source files and
+binary documents alike — and `undo()` restores every one of them byte for byte.
+
+Two refusals are load-bearing, because the alternative in each case is a verb that *looks* reversible:
+
+- **A truncated preview refuses to run.** If the result cap cut the file list short, the snapshot
+  would cover a prefix of what the mutation edits, so the verb rejects the call instead of
+  half-covering itself.
+- **A mutation that changed nothing releases its snapshot** and reports no token, so a later abort
+  cannot rewrite a file that verb never touched.
+
+`frontend/verbs.test.cjs` drives the real surface against the real `automation.js` and asserts the
+protocol at the wire level — which paths were snapshotted, that the snapshot happens *between* the
+dry run and the apply, that an abort compensates newest-first, and that an irreversible verb is
+refused inside a transaction before it runs.
+
+### Batch Plan: paint the refactor, run it as one transaction
+
+`⌘K` ▸ **Batch Plan** is the user-facing half. It embeds the shared **`zpwr-clip-engine` arrangement
+grid** — the same canvas renderer, model and interaction layer the DAW uses — driven by zmax-gui's
+own domain (`frontend/plan-domain.js`). Lanes are the reversible operations, columns are the
+project's files in run order, and a painted cell means "apply this operation to this file".
+
+**Run** executes the whole painting inside one bus transaction, column by column (everything for one
+file, then the next — the order the grid reads in). If any step fails, every file already rewritten
+is restored and the panel reports how many steps were compensated and how many were not. A plan is
+persisted, so a painted cell whose file has since disappeared is **dropped and counted** rather than
+silently retargeted at whatever file now occupies that column.
+
 ### Hooks editor
 
 `⌘K` ▸ **Hooks editor** opens the shared Monaco surface
@@ -554,13 +622,32 @@ gitignored build artifacts.
 ## Build
 
 ```sh
-git submodule update --init --recursive   # zgui-core, zpwr-embed-terminal, zpwr-file-browser, zpwr-i18n, zmax
+git submodule update --init --recursive   # zgui-core, zpwr-clip-engine, zpwr-embed-terminal, zpwr-file-browser, zpwr-i18n, zmax
 pnpm install
-pnpm tauri dev      # or: pnpm tauri build
+pnpm dev            # or: pnpm build
 ```
 
 The first run builds `crates/zmax` (Helix-fork workspace — a few minutes) and downloads the stryke
 release; both are cached afterward.
+
+The script surface is the family's, so any app is driven with the same muscle memory:
+
+| Script | Does |
+| --- | --- |
+| `dev` / `tauri:dev` · `build` / `tauri:build` | run / bundle the app |
+| `tauri:build:ci` | `tauri build --ci --no-sign` |
+| `clean` · `bust` · `rebuild` · `nuke` | purge artifacts · rotate the asset `?v=` · bust+clean+build · that plus the WebView caches |
+| `ship-check` | the pre-ship gate: submodules checked out **and matching their recorded pointer**, every app script referenced by `index.html`, no NUL byte in a frontend asset, JS + Rust suites, i18n audit |
+| `deploy` | build, clear the WebView caches, launch |
+| `test` · `test:js` · `test:rust` | everything · the JS suites · `cargo test` |
+| `doc` · `doc:open` · `doc:sync` | `cargo doc` for the host, opened, or synced into `docs/api` |
+| `i18n:sort` · `i18n:sort:check` · `i18n:audit` | sort the catalogs · check without writing · read-only completeness audit |
+| `build:hooks-editor` | rebuild the vendored Monaco hooks-editor bundle |
+
+Two of those are worth knowing about before they surprise you. `ship-check` flags a **detached
+submodule worktree that differs from the recorded pointer**, because that reproduces stale sources at
+build time while `git status` looks clean. And the catalogs `i18n:sort` writes live in the shared
+`zpwr-i18n` submodule, not here — the resulting diff is committed there.
 
 ## Releases
 
