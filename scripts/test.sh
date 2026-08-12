@@ -6,16 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== JS bridge tests =="
-# The shared GUI surface (menu bridge + the PTY-stream editor reconstruction and its HUD) plus the
-# app-local wiring tests (frontend/) — globs, so a new surface test is picked up without editing this.
-# Enumerated first: `node --test` over a glob matching nothing exits 0 and prints "tests 0", so a
-# moved directory would read as a clean pass instead of a broken checkout.
-JS_FILES=(crates/zmax-gui-core/webui/*.test.cjs frontend/*.test.cjs)
-for f in "${JS_FILES[@]}"; do
-    [ -e "$f" ] || { echo "test.sh: no test file at $f — submodule not checked out, or the path moved" >&2; exit 1; }
-done
-echo "test.sh: collected ${#JS_FILES[@]} JS test file(s)"
-node --test "${JS_FILES[@]}"
+# Discovery lives in ONE place — scripts/run-js-tests.mjs, which `pnpm test:js` also runs — so a new
+# suite is picked up by both without editing either. It exits non-zero on an empty discovery (a
+# `node --test` run over nothing prints "tests 0" and exits 0, so a moved directory or an
+# unchecked-out submodule would otherwise read as a clean pass) and it walks subdirectories, which
+# the flat glob this replaced did not.
+node scripts/run-js-tests.mjs
 
 echo "== staging sidecars (needed to compile the Rust bin) =="
 node scripts/prepare-stryke-sidecar.mjs || echo "test.sh: prepare-stryke-sidecar.mjs failed" >&2

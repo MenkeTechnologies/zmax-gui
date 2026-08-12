@@ -31,3 +31,7 @@
 [submodule "crates/zpdf-core"]
 	path = crates/zpdf-core
 	url = https://github.com/MenkeTechnologies/zpdf-core.git
+[submodule "frontend/lib/zpwr-clip-engine"]
+	path = frontend/lib/zpwr-clip-engine
+	url = https://github.com/MenkeTechnologies/zpwr-clip-engine.git
+	branch = main
