@@ -121,12 +121,23 @@
         };
     }
 
-    // fzfMatch: simple subsequence matcher returning {score, indices} (the shape file-browser.js's
-    // fuzzy filter highlight expects). Installed only if the host hasn't already provided one.
+    // fzfMatch: the {score, indices} shape file-browser.js's fuzzy filter + highlight expects,
+    // ADAPTED from the shared ZGui.fzf matcher rather than reimplemented (R7: one matcher per app,
+    // one highlight style everywhere). A private subsequence scorer here would rank and highlight
+    // the file browser differently from the ⌘K palette and every workbench picker, which is exactly
+    // the divergence R7 forbids — so the local fallback below exists only for a host with no
+    // zgui-core at all (the headless bridge tests), and is deliberately marked as such.
     if (typeof window.fzfMatch !== 'function') {
         window.fzfMatch = function fzfMatch(needle, haystack) {
             const n = String(needle || ''), h = String(haystack || '');
             if (n.length === 0) return {score: 0, indices: []};
+            const fzf = window.ZGui && window.ZGui.fzf;
+            if (fzf && typeof fzf.fzfMatch === 'function' && typeof fzf.getMatchIndices === 'function') {
+                const score = fzf.fzfMatch(n, h);
+                if (!score) return null;
+                return {score, indices: fzf.getMatchIndices(n, h) || []};
+            }
+            // No zgui-core in this host: plain subsequence, same {score, indices} contract.
             if (n.length > h.length) return null;
             const nl = n.toLowerCase(), hl = h.toLowerCase();
             const indices = [];
