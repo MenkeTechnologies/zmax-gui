@@ -15,6 +15,7 @@ frontend/zmax.css
 # Shared file browser copied from crates/zpwr-file-browser by scripts/copy-file-browser.mjs
 frontend/file-browser.js
 frontend/file-browser.css
+frontend/file-browser.html
 frontend/lib/fb-i18n/
 # Shared Monaco hooks editor bundled from crates/zpwr-hooks-editor by scripts/copy-hooks-editor.mjs
 frontend/lib/hooks-editor.bundle.js
