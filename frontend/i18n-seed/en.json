@@ -782,7 +782,7 @@
   "zmax.tbe.doc_matches": "matches",
   "zmax.tbe.doc_none": "No document matches",
   "zmax.tbe.doc_unreplaceable": "Found in documents, but not replaceable: pdf replace matches whole text runs, not substrings.",
-  "zmax.tbe.doc_unsupported": "Only a literal replace rule can run over documents: the office and pdf engines take a find/replace pair, not a regex, and a paragraph or cell is not a line. This rule is a ",
+  "zmax.tbe.doc_unsupported": "Only a literal replace rule can run over documents: the office and pdf engines take a find/replace pair, not a regex, and a paragraph or cell is not a line. This rule is a {what}.",
   "zmax.tbe.none": "No single rule reproduces every example yet — add or adjust rows.",
   "zmax.tbe.none_short": "No rule yet.",
   "zmax.tbe.sample_default": "getUserName\ngetUserId\ngetAccountBalance",
