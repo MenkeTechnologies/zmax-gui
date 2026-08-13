@@ -41,11 +41,11 @@ echo
 
 # ── frontend wiring ───────────────────────────────────────────────────────────────────────────
 cyber_section "FRONTEND"
-for f in frontend/index.html frontend/main.js frontend/panels.js frontend/verbs.js frontend/plan-panel.js frontend/plan-domain.js frontend/fb-backend.js; do
+for f in frontend/index.html frontend/main.js frontend/panels.js frontend/verbs.js frontend/plan-panel.js frontend/plan-domain.js frontend/fb-backend.js frontend/doc-view.js frontend/i18n-seed.js frontend/i18n-seed/en.json; do
     [ -f "$f" ] || fail "missing $f"
 done
 # Every app-local script must be referenced by index.html, or it is dead code that tests still pass.
-for f in main.js panels.js verbs.js plan-panel.js fb-backend.js tmux-config.js; do
+for f in main.js panels.js verbs.js plan-panel.js fb-backend.js tmux-config.js doc-view.js i18n-seed.js; do
     grep -q "src=\"$f\"" frontend/index.html || fail "frontend/index.html does not load $f"
 done
 # A single NUL byte makes the WebView parse an asset as binary and abort mid-file (see the
