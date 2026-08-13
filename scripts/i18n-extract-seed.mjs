@@ -65,7 +65,17 @@ function sources() {
 
 // `T("key", "English")` / `t("key", "English")`. The English half allows escapes so a literal
 // containing \" or \n is captured whole rather than truncated at the escape.
-const CALL = /\b[tT]\(\s*"([a-z0-9_.]+)"\s*,\s*"((?:[^"\\]|\\.)*)"/g;
+//
+// It also allows the literal to be BUILT BY CONCATENATION — `"first half " + "second half"` —
+// because a default long enough to wrap is written that way, and capturing only the first literal
+// seeded the catalogue a truncated sentence. English was unaffected (the JS engine concatenates at
+// runtime), so the damage was invisible until a translator shipped a string ending mid-clause.
+const STRING_LITERAL = /"(?:[^"\\]|\\.)*"/;
+const CALL = new RegExp(
+  String.raw`\b[tT]\(\s*"([a-z0-9_.]+)"\s*,\s*(` +
+  STRING_LITERAL.source + String.raw`(?:\s*\+\s*` + STRING_LITERAL.source + String.raw`)*)`,
+  'g',
+);
 // Any reference at all, with or without a literal — used to report keys nothing can seed.
 const REF = /\b[tT]\(\s*"([a-z0-9_.]+)"|data-i18n(?:-[a-z]+)?="([^"]+)"/g;
 
@@ -84,8 +94,10 @@ for (const file of sources()) {
   for (const m of src.matchAll(CALL)) {
     const [, key, english] = m;
     if (!key.startsWith(NAMESPACE)) continue;
-    // JSON.parse gives the same unescaping the JS parser applies to the source literal.
-    const value = JSON.parse(`"${english}"`);
+    // JSON.parse gives the same unescaping the JS parser applies to each source literal; joining
+    // the pieces is what the JS engine does with `+` at runtime.
+    const value = (english.match(new RegExp(STRING_LITERAL.source, 'g')) || [])
+      .map((lit) => JSON.parse(lit)).join('');
     if (seeded.has(key) && seeded.get(key) !== value) {
       conflicts.push({ key, a: seeded.get(key), aFile: origin.get(key), b: value, bFile: rel });
       continue;
