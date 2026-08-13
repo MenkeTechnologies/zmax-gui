@@ -560,6 +560,32 @@
           return Promise.reject(new Error("the editor bridge is not mounted"));
         },
       },
+      // ── the in-app document pane (doc-view.js over mountZpdf / mountZoffice) ────────────────
+      // Irreversible, both of them: opening replaces whatever the single pane was showing and
+      // closing forgets it, and neither one records what it displaced. The ids sit under
+      // `zmax.doc.`, namespaced against the panes' own `zoffice.view.*` — ZGui.automation keeps ONE
+      // flat registry and a later id silently wins, so a collision here would replace the pane's
+      // verb with the host's (or the reverse, depending on mount order).
+      {
+        id: "zmax.doc.open", rev: "irreversible", returns: "object",
+        label: "Open a document (pdf/docx/odt/xlsx/ods/pptx/odp) in the in-app pane",
+        params: [P("path", "string", true)],
+        run: function (args) {
+          var api = window.ZmaxDocView;
+          if (!api) return Promise.reject(new Error("the document pane is not mounted"));
+          return api.open((args || {}).path).then(function () { return api.state(); });
+        },
+      },
+      {
+        id: "zmax.doc.close", rev: "irreversible", returns: "object",
+        label: "Close the in-app document pane", params: [],
+        run: function () {
+          var api = window.ZmaxDocView;
+          if (!api) return Promise.reject(new Error("the document pane is not mounted"));
+          api.close();
+          return api.state();
+        },
+      },
       {
         id: "zmax.editor.ex", label: "Run an ex command in the editor", rev: "irreversible", returns: "null",
         params: [P("command", "string", true)],
@@ -590,6 +616,13 @@
         get: function () {
           return (typeof window.savedLocale === "function" && window.savedLocale()) ||
                  (typeof window.detectLocale === "function" && window.detectLocale()) || "en";
+        },
+      },
+      {
+        id: "zmax.doc.state", label: "The in-app document pane (path, engine, view state)", returns: "object",
+        get: function () {
+          var api = window.ZmaxDocView;
+          return api ? api.state() : { open: false, path: null, kind: null };
         },
       },
       {

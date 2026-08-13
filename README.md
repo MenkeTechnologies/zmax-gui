@@ -29,8 +29,10 @@ schemes, settings, CRT/splash). The editor is the same modal core; the window, c
 the GUI. Standard MenkeTechnologies GUI layout — see `GUI_APP_ARCHITECTURE.md` in the meta repo.
 
 The host is thin with one deliberate exception: the **office** and **PDF** engines link into it as
-rlibs so that project search, replace and git blame can see inside binary documents in-process. See
-[Documents are searchable](#documents-are-searchable) and
+rlibs so that project search, replace and git blame can see inside binary documents in-process — and
+so that a document can be *opened* in the IDE rather than handed to an external viewer. See
+[Documents are searchable](#documents-are-searchable),
+[Documents are viewable](#documents-are-viewable) and
 [Documents are blamable](#documents-are-blamable).
 
 ```
@@ -61,11 +63,11 @@ zmax-gui/
 │   ├─ zpwr-embed-terminal   shared PTY engine (submodule)
 │   ├─ zpwr-file-browser     shared multi-pane file browser: `crate/` (fs_* commands, watcher) + webui
 │   ├─ zpwr-i18n             shared 27-locale i18n runtime + catalogs (submodule)
-│   ├─ zoffice-core          office engine (docx/odt/xlsx/ods/pptx/odp), linked as an rlib
-│   └─ zpdf-core             PDF engine, linked as an rlib
+│   ├─ zoffice-core          office engine (docx/odt/xlsx/ods/pptx/odp): rlib + mountable view
+│   └─ zpdf-core             PDF engine: rlib + mountable viewer
 ├─ scripts/
 │   ├─ mvim              terminal launcher (open files in the running window)
-│   ├─ copy-{webui,embed-terminal,i18n,file-browser}.mjs   sync shared webui into frontend/
+│   ├─ copy-{webui,embed-terminal,i18n,file-browser,doc-views}.mjs  sync shared webui into frontend/
 │   ├─ clean/bust/rebuild/nuke/ship-check/deploy.sh        the shared app lifecycle scripts
 │   ├─ run-js-tests.mjs   one discovery path for every JS suite (pnpm test + test:js)
 │   ├─ i18n-{sort-catalogs,catalog-audit}.mjs   catalog sort + read-only completeness audit
@@ -76,6 +78,7 @@ zmax-gui/
    ├─ editor-state.js           editor state reconstructed FROM the PTY stream (the return path)
    ├─ editor-hud.js             buffer/tab bar + status strip + minimap, driven by that state
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
+   ├─ doc-view.js               the in-app document pane over mountZpdf / mountZoffice
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
    ├─ verbs.js                  the TYPED bus surface: the workbench as reversible verbs
    ├─ plan-panel.js             Batch Plan: the shared arrangement grid + the transactional runner
@@ -106,9 +109,9 @@ results are fast and the editor stays the single source of truth.
   and the two things only this pass can express are yours to set — **which formats** (a toggle per
   `.docx` / `.odt` / `.xlsx` / `.ods` / `.pptx` / `.odp` / `.pdf`; none on means all of them) and
   whether to **match case**, plus hidden files. Each hit is addressed the way its format is addressed
-  (`¶12`, `Sheet1!B14`, `slide 4`, `p. 7`), and picking one opens the document in the OS handler with
-  that address on the clipboard. No regex toggle: the engines are substring scanners, so the backend
-  rejects a regex query outright rather than matching it literally.
+  (`¶12`, `Sheet1!B14`, `slide 4`, `p. 7`), and picking one opens the document **in the IDE, at that
+  address** — see [Documents are viewable](#documents-are-viewable). No regex toggle: the engines are
+  substring scanners, so the backend rejects a regex query outright rather than matching it literally.
 - **Search & Replace** (`⇧⌘H`) — project-wide replace with **regex** (including `$1` capture
   references), match-case and whole-word; a live **preview** of every before → after line, then
   **Replace All** rewrites the matching files on disk (confirmed first). Oversized files, and
@@ -235,6 +238,34 @@ Four behaviours differ from the text branch, and each is surfaced in the UI rath
   rewrite edits raw XML text nodes. A case-insensitive replace says so in the preview.
 - **Parse failures are reported**, not swallowed: a corrupt package appears as its own row with the
   engine's message, so it never looks like "no matches".
+
+### Documents are viewable
+
+Searching a `.docx` and blaming a `.pdf` in-process is only half the story if *looking* at the hit
+still means leaving for Preview or LibreOffice. It no longer does. Both engines ship a **mountable
+view** — `zoffice-core`'s `webui/zoffice-view.js` and `zpdf-core`'s `frontend/js/zpdf.js` — and
+zmax-gui mounts them into a modal pane, over the same rlibs the walker already uses, through one
+bare app command per engine (`zoffice_invoke` / `zpdf_invoke`, registered in `lib.rs`). No
+subprocess, no third-party viewer, no export step.
+
+The pane is the reason the address the search found is worth carrying: it is **spent on arrival**.
+A `p. 7` hit lands on page 7; a `Sheet1!B14` hit opens the spreadsheet's Data view; a paragraph or
+slide hit is searched for in the opened document. Handing the file to the OS default application
+could never do any of that — an external viewer cannot be told to jump to `¶12`, which is why the
+old path could only put the address on the clipboard.
+
+| Extension | Pane |
+|---|---|
+| `.pdf` | `zpdf-core` viewer — pages, text layer, outline, markup |
+| `.docx`, `.odt`, `.xlsx`, `.ods`, `.pptx`, `.odp` | `zoffice-core` view — document / data / analysis |
+| anything else | the OS default application, with the address on the clipboard |
+
+That last row is not a leftover: a format neither engine reads (`.epub`, `.key`, …) still opens, and
+so does a document whose pane fails to mount. The fallback is the exception path, not the default.
+
+Scriptable like everything else here — `zmax.doc.open`, `zmax.doc.close` and the `zmax.doc.state`
+query are on the automation bus, alongside the pane's own `zoffice.view.*` verbs, so one stryke
+script can open a document in the IDE and read it back without a screenshot.
 
 ### Documents are blamable
 

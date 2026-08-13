@@ -50,10 +50,15 @@ zwire-host = { path = "../../crates/zwire-host", default-features = false, featu
 sysinfo = "0.33"   # match zwire-host's sysinfo so the System/Networks/Disks types line up
 # Binary-document-transparent project search/replace: the office engine (docx/odt/xlsx/ods/pptx/odp)
 # and the PDF engine link as rlibs into this same host, so the walker parses documents in-process —
-# no subprocess spawn, no IPC. `zpdf-core`'s `tauri` feature stays off: this uses the engine API
-# directly, not the plugin.
-zoffice-core = { path = "../../crates/zoffice-core" }
-zpdf-core = { path = "../../crates/zpdf-core", default-features = false }
+# no subprocess spawn, no IPC.
+#
+# The `tauri` feature on each is what turns them from *libraries the walker calls* into *backends a
+# mounted view can talk to*. It adds one bare app command per engine (`zoffice_invoke` /
+# `zpdf_invoke`) — bare, so no Tauri v2 capability ACL is involved — which is the transport the
+# engines' own mountable views use. Without it the views mount against their no-backend mock and
+# every open resolves to an honest empty, which is not a document viewer.
+zoffice-core = { path = "../../crates/zoffice-core", features = ["tauri"] }
+zpdf-core = { path = "../../crates/zpdf-core", default-features = false, features = ["tauri"] }
 # Document parsing is orders of magnitude costlier per file than a line grep, so the document branch
 # of the walk fans out across a thread pool. The text branch stays single-threaded and unchanged.
 rayon = "1"

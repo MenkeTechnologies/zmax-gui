@@ -17,6 +17,9 @@ frontend/file-browser.js
 frontend/file-browser.css
 frontend/file-browser.html
 frontend/lib/fb-i18n/
+# Embeddable document views staged from crates/zoffice-core + crates/zpdf-core by
+# scripts/copy-doc-views.mjs (window.mountZoffice / window.mountZpdf)
+frontend/lib/doc-views/
 # Shared Monaco hooks editor bundled from crates/zpwr-hooks-editor by scripts/copy-hooks-editor.mjs
 frontend/lib/hooks-editor.bundle.js
 frontend/lib/hooks-editor.bundle.css

@@ -142,6 +142,13 @@ pub static COMMANDS: &[&str] = &[
     "zgui_reveal_scripts",
     "zgui_write_scripts",
     "zmax_exec_command",
+    // The document panes' engine transports. One command each carries that engine's ENTIRE
+    // surface — `zoffice_invoke("writer.read", {path})`, `zpdf_invoke("open_pdf", {path})` — so a
+    // script can drive an office document or a PDF open inside zmax-gui without going through the
+    // pane's UI. `zoffice_commands` is the discovery call the view itself uses.
+    "zoffice_commands",
+    "zoffice_invoke",
+    "zpdf_invoke",
 ];
 
 /// Registered commands deliberately withheld from the bus. Two of them are the automation bridge's

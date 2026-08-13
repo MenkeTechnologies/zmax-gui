@@ -315,6 +315,53 @@
   <script src="fb-backend.js"></script>
   <script src="file-browser.js"></script>
 
+  <!-- G2: the in-app DOCUMENT PANES. The two engines already linked into the host as rlibs now
+       ship mountable views, so a .pdf / .docx / .xlsx hit opens INSIDE the IDE at its locator
+       instead of being handed to Preview or LibreOffice. Staged from the submodules by
+       scripts/copy-doc-views.mjs; backed by the bare zpdf_invoke / zoffice_invoke app commands.
+       Both are classic scripts and neither auto-mounts here (zpdf's auto-mount needs a #zpdfRoot,
+       which this document does not have). doc-view.js is the app-owned host wiring and must load
+       after both, and before panels.js, whose document hits call it. -->
+  <link rel="stylesheet" href="lib/doc-views/zpdf-app.css">
+  <link rel="stylesheet" href="lib/doc-views/zoffice-view.css">
+  <!-- the zgui-core widgets the two views build their chrome from; without these each view falls
+       back to plain DOM and loses its tables, tabs, pickers and markup tools -->
+  <script src="lib/zgui-core/webui/alert.js"></script>
+  <script src="lib/zgui-core/webui/arrange.js"></script>
+  <script src="lib/zgui-core/webui/button-group.js"></script>
+  <script src="lib/zgui-core/webui/chart.js"></script>
+  <script src="lib/zgui-core/webui/csv-view.js"></script>
+  <script src="lib/zgui-core/webui/table.js"></script>
+  <script src="lib/zgui-core/webui/data-table.js"></script>
+  <script src="lib/zgui-core/webui/diff-view.js"></script>
+  <script src="lib/zgui-core/webui/divider.js"></script>
+  <script src="lib/zgui-core/webui/drawer.js"></script>
+  <script src="lib/zgui-core/webui/dropdown-menu.js"></script>
+  <script src="lib/zgui-core/webui/editable.js"></script>
+  <script src="lib/zgui-core/webui/empty-state.js"></script>
+  <script src="lib/zgui-core/webui/expose.js"></script>
+  <script src="lib/zgui-core/webui/field.js"></script>
+  <script src="lib/zgui-core/webui/image-compare.js"></script>
+  <script src="lib/zgui-core/webui/kv-editor.js"></script>
+  <script src="lib/zgui-core/webui/lane-grid.js"></script>
+  <script src="lib/zgui-core/webui/loading-overlay.js"></script>
+  <script src="lib/zgui-core/webui/log-view.js"></script>
+  <script src="lib/zgui-core/webui/number-stepper.js"></script>
+  <script src="lib/zgui-core/webui/paint.js"></script>
+  <script src="lib/zgui-core/webui/popover.js"></script>
+  <script src="lib/zgui-core/webui/signature-pad.js"></script>
+  <script src="lib/zgui-core/webui/stat-bars.js"></script>
+  <script src="lib/zgui-core/webui/stat-strip.js"></script>
+  <script src="lib/zgui-core/webui/tabs.js"></script>
+  <script src="lib/zgui-core/webui/thumbnail-rail.js"></script>
+  <script src="lib/zgui-core/webui/tiles.js"></script>
+  <script src="lib/zgui-core/webui/tour.js"></script>
+  <script src="lib/zgui-core/webui/xml-view.js"></script>
+  <script src="lib/doc-views/zoffice-dom.js"></script>
+  <script src="lib/doc-views/zoffice-view.js"></script>
+  <script src="lib/doc-views/zpdf.js"></script>
+  <script src="doc-view.js"></script>
+
   <!-- app-local project workbench (quick-open, find-in-files, recent, project files, git); before main.js -->
   <script src="panels.js"></script>
 

@@ -52,6 +52,13 @@ impl Default for SysMon {
 /// no-terminal-chatter rule. Failures are ignored; logging is never load-bearing.
 #[tauri::command]
 fn log_diagnostic(app: tauri::AppHandle, source: String, message: String) {
+    log_line(&app, &source, &message);
+}
+
+/// Append one `[source] message` line to `zmax.log`. The single writer: the appShell's
+/// `log_diagnostic` command and the host's own startup notes go through here, so there is one
+/// format and one path. Never prints — a note the user did not ask for belongs in the log.
+fn log_line(app: &tauri::AppHandle, source: &str, message: &str) {
     use std::io::Write;
     use tauri::Manager;
     let Ok(dir) = app.path().app_log_dir() else { return };
@@ -272,6 +279,13 @@ pub fn run() {
             bus::zgui_bridge_event,
             bus::zgui_reveal_scripts,
             zgui_shell::tauri_prefs::zgui_write_scripts,
+            // Document panes. Each engine exposes its whole surface as ONE bare app command that
+            // its mountable view dispatches through — `zoffice_invoke(cmd, args)` and
+            // `zpdf_invoke(cmd, args)`. Bare rather than plugin-namespaced, so no Tauri v2
+            // capability ACL is involved. `zoffice_commands` is the view's discovery call.
+            zoffice_core::tauri_plugin::zoffice_invoke,
+            zoffice_core::tauri_plugin::zoffice_commands,
+            zpdf_core::tauri_plugin::zpdf_invoke,
         ])
         .setup(|app| {
             // Ensure the app data + log dirs exist and seed the log file, so the appShell
@@ -306,6 +320,16 @@ pub fn run() {
                     let urls = event.urls().iter().map(|u| u.to_string()).collect();
                     open_intake::ingest(&h, urls);
                 });
+            }
+
+            // Document-pane engines. Each manages its own state and captures THIS host's app-data
+            // dir, so the panes' recents land under zmax-gui rather than under zoffice / zpdf. A
+            // failure here is not fatal: it costs the document panes, not the editor.
+            if let Err(e) = zoffice_core::tauri_plugin::setup(app.handle()) {
+                log_line(app.handle(), "doc-pane", &format!("zoffice-core setup failed: {e}"));
+            }
+            if let Err(e) = zpdf_core::tauri_plugin::setup(app.handle()) {
+                log_line(app.handle(), "doc-pane", &format!("zpdf-core setup failed: {e}"));
             }
 
             // Open the GUI Automation Bus socket so `App::open("zmax-gui")` / `App::here()->verbs()`

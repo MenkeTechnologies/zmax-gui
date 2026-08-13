@@ -5,8 +5,8 @@
   "identifier": "com.menketechnologies.zmax-gui",
   "build": {
     "frontendDist": "../../frontend",
-    "beforeDevCommand": "node scripts/copy-zgui-core.mjs && node scripts/copy-webui.mjs && node scripts/copy-embed-terminal.mjs && node scripts/copy-i18n.mjs && node scripts/copy-file-browser.mjs && node scripts/copy-hooks-editor.mjs && node scripts/prepare-stryke-sidecar.mjs && node scripts/prepare-zmax-sidecar.mjs",
-    "beforeBuildCommand": "node scripts/copy-zgui-core.mjs && node scripts/copy-webui.mjs && node scripts/copy-embed-terminal.mjs && node scripts/copy-i18n.mjs && node scripts/copy-file-browser.mjs && node scripts/copy-hooks-editor.mjs && node scripts/prepare-stryke-sidecar.mjs && node scripts/prepare-zmax-sidecar.mjs"
+    "beforeDevCommand": "node scripts/copy-zgui-core.mjs && node scripts/copy-webui.mjs && node scripts/copy-embed-terminal.mjs && node scripts/copy-i18n.mjs && node scripts/copy-file-browser.mjs && node scripts/copy-doc-views.mjs && node scripts/copy-hooks-editor.mjs && node scripts/prepare-stryke-sidecar.mjs && node scripts/prepare-zmax-sidecar.mjs",
+    "beforeBuildCommand": "node scripts/copy-zgui-core.mjs && node scripts/copy-webui.mjs && node scripts/copy-embed-terminal.mjs && node scripts/copy-i18n.mjs && node scripts/copy-file-browser.mjs && node scripts/copy-doc-views.mjs && node scripts/copy-hooks-editor.mjs && node scripts/prepare-stryke-sidecar.mjs && node scripts/prepare-zmax-sidecar.mjs"
   },
   "app": {
     "withGlobalTauri": true,

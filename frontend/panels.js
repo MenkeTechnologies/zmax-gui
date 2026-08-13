@@ -65,19 +65,40 @@
   }
 
   // Activate a document hit. `:open` is not an option — the editor is a text buffer and these are
-  // packages — so the document is handed to the OS default application and the in-document
-  // locator goes to the clipboard, which is the part the external app cannot be told about.
-  // A row is never left inert.
+  // packages — so the hit opens in the IN-APP document pane (doc-view.js, over the engines'
+  // mountable views), which is the only surface that can be told WHERE the hit is: the pane lands
+  // on the PDF page / opens the spreadsheet's Data view / searches for the matched text.
+  //
+  // The OS default application remains the fallback, for the two cases the pane genuinely cannot
+  // serve: a format neither engine owns (`ZmaxDocView.kindOf` answers null), and a mount that
+  // failed. In that path the locator can only go to the clipboard, because an external app cannot
+  // be told to jump to ¶12. A row is never left inert.
   function openDocument(h) {
     if (!h || !h.path) return;
     var where = locatorLabel(h.locator);
+    var dv = window.ZmaxDocView;
+    if (dv && dv.kindOf(h.path)) {
+      dv.open(h.path, { locator: h.locator, text: h.text, title: h.rel }).then(function () {
+        invoke("recent_add", { path: h.path }).catch(function () {});
+        toast(T("zmax.panel.opened_doc", "Opened") + " " + h.rel + (where ? " · " + where : ""));
+      }, function (err) {
+        toast(String(err && err.message ? err.message : err), "error");
+        openDocumentExternally(h, where);
+      });
+      return;
+    }
+    openDocumentExternally(h, where);
+  }
+
+  /// The fallback path: hand the file to the OS default application and put the in-document
+  /// locator on the clipboard, since that is the one thing the external app cannot be told.
+  function openDocumentExternally(h, where) {
     var op = window.__TAURI__ && window.__TAURI__.opener;
-    if (op && typeof op.openPath === "function") {
-      op.openPath(h.path).catch(function (err) { toast(String(err), "error"); });
-    } else {
+    if (!op || typeof op.openPath !== "function") {
       toast(T("zmax.panel.no_opener", "No handler for this document"), "error");
       return;
     }
+    op.openPath(h.path).catch(function (err) { toast(String(err), "error"); });
     if (where) {
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(where);
@@ -2055,5 +2076,8 @@
   // `openInEditor` is exported because the bus's `zmax.editor.open` verb (verbs.js) must drive the
   // editor through the SAME bridge the panels use — a second `:open` writer would drift from this
   // one's quoting and recent-files bookkeeping.
-  window.ZmaxPanels = { mount: mount, openInEditor: openInEditor };
+  // `docRowsFrom` is exported for the headless suite: the document-hit activation path (in-app pane
+  // vs OS fallback) is only reachable through a picker row, and a test that rebuilt the row would
+  // be testing its own copy of the decision rather than the shipped one.
+  window.ZmaxPanels = { mount: mount, openInEditor: openInEditor, docRowsFrom: docRowsFrom };
 })();

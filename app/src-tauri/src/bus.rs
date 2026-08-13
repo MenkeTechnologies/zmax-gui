@@ -34,13 +34,16 @@
 //! pre-state and returns it under the reserved [`WAS`] key. That key is added on the socket route
 //! only; the UI invokes the commands directly and never sees it.
 //!
-//! `zoffice-core` and `zpdf-core` link in as rlibs to back the document commands in `doc_search`.
-//! Their own command surfaces (`zoffice_core::commands`, `zpdf_core::commands`) stay *off* this bus,
-//! unchanged and deliberately: zmax-gui uses those crates as libraries inside its walker, not as
-//! managed engines, so a bus call would run against an ad-hoc engine with no relation to the
-//! editor's open buffers; and `zpdf-core` is built with `default-features = false`, which leaves its
-//! `zpdf_invoke` dispatch (behind the `tauri` feature) out of the binary entirely. Those verbs are
-//! scriptable at their own apps' buses (`App::open("zoffice")`, `App::open("zpdf")`).
+//! `zoffice-core` and `zpdf-core` link in as rlibs, and are on this bus as of the document panes:
+//! `zoffice_invoke` / `zpdf_invoke` (plus the office engine's `zoffice_commands` discovery call)
+//! carry each engine's whole surface behind one command name. That is a reversal of the earlier
+//! position here, and the reason it reversed is the reason it was taken: the engines used to be
+//! libraries the `doc_search` walker called, so a bus call would have run against an ad-hoc engine
+//! unrelated to anything on screen. `lib.rs`'s setup now hands each engine THIS host's app-data dir
+//! and manages its state, so a bus call and the mounted pane address one engine — and a script that
+//! opens a document in the pane can then read it, search it and export it through the same
+//! transport the pane uses. The panes' own typed verbs (`zoffice.view.*`, `zmax.doc.*`) ride the
+//! webview route alongside these, and the standalone apps' buses are unaffected.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,6 +88,12 @@ pub(crate) const WAS: &str = "_zmx_was";
 ///
 /// `txn_list` enumerates the snapshot store's token directories and writes nothing, so it reads
 /// like any other listing — including when the store holds stranded tokens, which is what it is for.
+///
+/// `zoffice_commands` returns the office engine's command descriptors and takes no arguments at
+/// all. Its two siblings, `zoffice_invoke` and `zpdf_invoke`, are deliberately NOT here: each one
+/// carries an entire engine behind a `cmd` STRING, so its class is a property of the argument
+/// rather than of the command, and `rev_of` classifies by name. A read and a save arrive under one
+/// name, so the only honest class for the pair is the fail-fast default.
 const PURE: &[&str] = &[
     "bookmark_list",
     "detect_encoding",
@@ -135,6 +144,7 @@ const PURE: &[&str] = &[
     "sys_stats",
     "txn_list",
     "zmax_exec_command",
+    "zoffice_commands",
 ];
 
 /// Host commands whose effect [`undo_plan`] reverses exactly, by replaying another host command.
@@ -688,7 +698,7 @@ mod tests {
         let irreversible: Vec<&&str> = all.iter().filter(|c| rev_of(c) == "irreversible").collect();
         assert_eq!(
             (PURE.len(), INVERSE.len(), irreversible.len()),
-            (49, 13, 63),
+            (50, 13, 65),
             "host surface changed: reclassify the new commands, do not let them default. \
              unclassified = {irreversible:?}"
         );
