@@ -10,7 +10,19 @@
  *      worse than a missing key: the runtime treats it as a successful lookup and renders nothing.
  *
  * Sources are the SHARED `zpwr-i18n` catalogs (`crates/zpwr-i18n/i18n/*.json`) — the copies under
- * `frontend/i18n/` are build output. Nothing is written; the exit code is the result.
+ * `frontend/i18n/` are build output — PLUS this app's own English seed
+ * (`frontend/i18n-seed/en.json`), which `frontend/i18n-seed.js` merges under every loaded locale.
+ * Question 1 has to consider both or it reports a gap the runtime does not have: a `zmax.*` key the
+ * seed answers renders correctly in every locale, and calling it "absent" would bury the keys that
+ * genuinely have no English anywhere under 800 that do. The two sources are reported separately, and
+ * question 2 is unchanged — per-locale completeness is measured against the SHARED seed alone,
+ * because the app seed is English-only by design and translating it is not this app's job.
+ *
+ * What the residual gap is expected to be: the `ui.*` / `menu.*` keys this app's markup carries for
+ * the shared file browser (`zpwr-file-browser`). Those are that component's vocabulary to define and
+ * to ship a catalog for, so they stay reported here rather than being seeded locally.
+ *
+ * Nothing is written; the exit code is the result.
  *
  * Key references are read from the app's own surfaces only: `data-i18n*` attributes in
  * `frontend/*.html`, and `t("…")` / `T("…", …)` calls in the app's JS. Vendored libraries under
@@ -57,7 +69,14 @@ for (const file of sources) {
   for (const m of src.matchAll(/\b[tT]\(\s*"([a-z0-9_.]+)"/g)) referenced.add(m[1]);
 }
 
-const missing = [...referenced].filter((k) => !(k in en)).sort();
+// The app's own English seed, loaded at runtime UNDER the shared catalog (frontend/i18n-seed.js).
+// Absent on a tree where it has not been generated, which is not an error here — every key it holds
+// is then reported as missing, which is exactly what the situation is.
+const seedPath = join(root, 'frontend', 'i18n-seed', 'en.json');
+const appSeed = existsSync(seedPath) ? JSON.parse(readFileSync(seedPath, 'utf8')) : {};
+
+const seededOnly = [...referenced].filter((k) => !(k in en) && k in appSeed).sort();
+const missing = [...referenced].filter((k) => !(k in en) && !(k in appSeed)).sort();
 
 // ── per-locale completeness ────────────────────────────────────────────────────────────────────
 const enKeys = Object.keys(en);
@@ -69,13 +88,17 @@ for (const [locale, cat] of Object.entries(catalogs)) {
   if (absent.length || empty.length) gaps.push({ locale, absent: absent.length, empty: empty.length });
 }
 
-console.log(`i18n-audit: ${Object.keys(catalogs).length} locales · ${enKeys.length} keys in the en seed`);
+console.log(`i18n-audit: ${Object.keys(catalogs).length} locales · ${enKeys.length} keys in the shared en seed`);
+console.log(`i18n-audit: ${Object.keys(appSeed).length} keys in this app's English seed (frontend/i18n-seed/en.json)`);
 console.log(`i18n-audit: ${referenced.size} keys referenced across ${sources.length} app source file(s)`);
+if (seededOnly.length) {
+  console.log(`i18n-audit: ${seededOnly.length} of them read from the app seed only — English everywhere, translated nowhere`);
+}
 
 let rc = 0;
 if (missing.length) {
   rc = 1;
-  console.error(`i18n-audit: ${missing.length} referenced key(s) absent from the en seed:`);
+  console.error(`i18n-audit: ${missing.length} referenced key(s) in NO English catalog — they render as the raw key:`);
   for (const k of missing.slice(0, 40)) console.error(`  ${k}`);
   if (missing.length > 40) console.error(`  … and ${missing.length - 40} more`);
 }
