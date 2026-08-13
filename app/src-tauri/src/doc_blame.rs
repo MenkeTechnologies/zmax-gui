@@ -525,10 +525,21 @@ mod tests {
 
     /// A directory unique to this call. The counter matters for the same reason it does in
     /// `doc_search.rs`: these run in parallel in one process and a pid-only name collides.
+    ///
+    /// The result is CANONICALIZED, and that is load-bearing rather than tidiness. On macOS
+    /// `std::env::temp_dir()` returns the `/var/folders/…` symlink to `/private/var/folders/…`.
+    /// `git init` in such a directory records the resolved `/private/…` path as the worktree, so a
+    /// later `git log --follow -- /var/folders/…/doc.xlsx` passes a pathspec that is, literally
+    /// read, outside the worktree it names. Stock git tolerates the mismatch; a git implementation
+    /// that resolves the pathspec against the recorded worktree without following the symlink
+    /// rejects it ("is not inside of the worktree"), and every blame here then reports "no history
+    /// for this document". Canonicalizing once, here, means the fixtures hand blame the same path
+    /// form git itself recorded — which is what a caller in a real project tree always does.
     fn tempdir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
-        let base = std::env::temp_dir().join(format!(
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+        let base = root.join(format!(
             "zmax-gui-blame-test-{}-{}",
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed),
