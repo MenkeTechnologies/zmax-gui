@@ -20,12 +20,14 @@
 //!
 //! TRANSACTIONS. Every host command is classified by [`rev_of`] into the three `rev` classes the bus
 //! defines (`zgui-core/CONSUMERS.md` §0.1), and [`Handler::undo`] compensates the `"inverse"` ones by
-//! replaying the opposite host command. The honest headline for this app: **only 12 of 121 verbs are
-//! reversible**, and the reason is structural rather than an omission. zmax-gui's editor channel is
+//! replaying the opposite host command. The honest headline for this app: **only the 13 verbs named
+//! in [`INVERSE`] are reversible**, out of the whole [`crate::commands::COMMANDS`] surface, and the
+//! reason is structural rather than an omission. zmax-gui's editor channel is
 //! blind PTY keystrokes (`terminal_write` and friends), and its file commands overwrite content;
 //! neither can be taken back. What IS reversible is the file-browser's create/copy/chmod primitives,
-//! which prove their destination absent before writing, and the snippet store, which the surface
-//! returns verbatim. [`INVERSE`] names every case that was considered and rejected, with the reason.
+//! which prove their destination absent before writing, the snippet store, which the surface
+//! returns verbatim, and `txn_snapshot`, whose only effect is a token directory `txn_discard`
+//! removes. [`INVERSE`] names every case that was considered and rejected, with the reason.
 //!
 //! Compensation needs the state a verb overwrote, and `undo(verb, args, result)` never sees the host
 //! as it was — so, exactly as CONSUMERS.md §0.1 rule 3 prescribes, the forward call captures its own
@@ -80,6 +82,9 @@ pub(crate) const WAS: &str = "_zmx_was";
 /// only because the `licence` feature is off (`Cargo.toml` declares it with no default); a release
 /// build turns it on, and it then runs an antitamper scan and can spawn a background network
 /// refresh. A class that flips with a cargo feature is not a class.
+///
+/// `txn_list` enumerates the snapshot store's token directories and writes nothing, so it reads
+/// like any other listing — including when the store holds stranded tokens, which is what it is for.
 const PURE: &[&str] = &[
     "bookmark_list",
     "detect_encoding",
@@ -128,6 +133,7 @@ const PURE: &[&str] = &[
     "snippet_list",
     "stryke_bin_path",
     "sys_stats",
+    "txn_list",
     "zmax_exec_command",
 ];
 
@@ -170,6 +176,10 @@ const PURE: &[&str] = &[
 ///   `fs_copy_path`) use single-level `create_dir` / `create_new` and are exact.
 /// * **`rename_file`** — a bare `fs::rename` that silently replaces an existing destination.
 /// * **`take_pending_opens`** — reads like a getter, but `mem::take`s the queue; nothing re-enqueues.
+/// * **`txn_restore`** — writes recorded bytes over whatever is at each path NOW. Undoing that
+///   needs a snapshot of the content it overwrote, which is another snapshot, not an inverse.
+/// * **`txn_discard`** — deletes a token directory outright. Nothing recreates it: the bytes it
+///   held were the only copy of the pre-state it was recording.
 const INVERSE: &[&str] = &[
     "fs_chmod",
     "fs_compress",
@@ -183,6 +193,7 @@ const INVERSE: &[&str] = &[
     "snippet_clear",
     "snippet_remove",
     "toggle_fullscreen",
+    "txn_snapshot",
 ];
 
 /// The reversibility class of a host command. Anything unlisted — including every webview-forwarded
@@ -292,6 +303,16 @@ fn undo_plan(verb: &str, args: &Value, result: &Value) -> Result<Vec<(String, Va
             steps
         }
         "toggle_fullscreen" => vec![("toggle_fullscreen".to_string(), json!({}))],
+        // The snapshot's whole effect is one token directory outside the user's tree, and the reply
+        // is the only place its name exists. `txn_discard` removes exactly that directory, so the
+        // compensation needs no state the bus cannot read.
+        "txn_snapshot" => {
+            let made = returned(result);
+            let token = made
+                .as_str()
+                .ok_or_else(|| "txn_snapshot: reply did not name the token it created".to_string())?;
+            vec![("txn_discard".to_string(), json!({ "token": token }))]
+        }
         other => return Err(format!("verb not reversible: {other}")),
     })
 }
@@ -667,11 +688,43 @@ mod tests {
         let irreversible: Vec<&&str> = all.iter().filter(|c| rev_of(c) == "irreversible").collect();
         assert_eq!(
             (PURE.len(), INVERSE.len(), irreversible.len()),
-            (48, 12, 61),
+            (49, 13, 63),
             "host surface changed: reclassify the new commands, do not let them default. \
              unclassified = {irreversible:?}"
         );
         assert_eq!(PURE.len() + INVERSE.len() + irreversible.len(), all.len());
+    }
+
+    /// `txn_snapshot` is declared reversible; this proves the declaration by running the plan the
+    /// declaration promises against the real snapshot store. The compensation must remove exactly
+    /// the token the forward call reported and nothing else — a second, untouched token in the same
+    /// store is what makes "and nothing else" observable rather than assumed.
+    ///
+    /// The three sibling verbs stay irreversible on purpose: `txn_restore` overwrites live content,
+    /// `txn_discard` destroys the only copy of a pre-state, and `txn_list` is a read.
+    #[test]
+    fn a_snapshot_is_taken_back_by_discarding_the_token_it_reported() {
+        let base = scratch("txn-inverse");
+        let doc = base.join("doc.txt");
+        std::fs::write(&doc, b"original").expect("seed");
+
+        let token = crate::txn::snapshot(&base, &[doc.to_string_lossy().to_string()]).expect("snapshot");
+        let bystander =
+            crate::txn::snapshot(&base, &[doc.to_string_lossy().to_string()]).expect("second snapshot");
+        assert_ne!(token, bystander, "each snapshot gets its own token");
+
+        // The plan the bus would run to unwind the forward call, derived from its reply exactly as
+        // `Handler::undo` derives it (a bare scalar arrives wrapped under "value").
+        let plan = undo_plan("txn_snapshot", &json!({}), &json!({ WAS: {}, "value": token }))
+            .expect("txn_snapshot must be reversible");
+        assert_eq!(plan.len(), 1, "one step, not a guessed sequence: {plan:?}");
+        assert_eq!(plan[0].0, "txn_discard");
+        assert_eq!(plan[0].1, json!({ "token": token }));
+
+        crate::txn::discard(&base, &plan[0].1["token"].as_str().unwrap()).expect("discard");
+        let left = crate::txn::list(&base).expect("list");
+        assert!(!left.contains(&token), "the compensated token survived: {left:?}");
+        assert!(left.contains(&bystander), "the compensation took an unrelated token with it: {left:?}");
     }
 
     /// The blind channels stay irreversible. This is the app's main editor path, so a future edit
