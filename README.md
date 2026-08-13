@@ -70,7 +70,8 @@ zmax-gui/
 │   ├─ copy-{webui,embed-terminal,i18n,file-browser,doc-views}.mjs  sync shared webui into frontend/
 │   ├─ clean/bust/rebuild/nuke/ship-check/deploy.sh        the shared app lifecycle scripts
 │   ├─ run-js-tests.mjs   one discovery path for every JS suite (pnpm test + test:js)
-│   ├─ i18n-{sort-catalogs,catalog-audit}.mjs   catalog sort + read-only completeness audit
+│   ├─ i18n-{sort-catalogs,catalog-audit,extract-seed}.mjs  catalog sort · completeness audit ·
+│   │                                                       derive this app English seed
 │   └─ prepare-{zmax,stryke}-sidecar.mjs   stage the bundled binaries
 └─ frontend/
    ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
@@ -79,6 +80,7 @@ zmax-gui/
    ├─ editor-hud.js             buffer/tab bar + status strip + minimap, driven by that state
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ doc-view.js               the in-app document pane over mountZpdf / mountZoffice
+   ├─ i18n-seed.js · i18n-seed/  this app English seed, merged UNDER the loaded locale
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
    ├─ verbs.js                  the TYPED bus surface: the workbench as reversible verbs
    ├─ plan-panel.js             Batch Plan: the shared arrangement grid + the transactional runner
@@ -673,12 +675,34 @@ The script surface is the family's, so any app is driven with the same muscle me
 | `test` · `test:js` · `test:rust` | everything · the JS suites · `cargo test` |
 | `doc` · `doc:open` · `doc:sync` | `cargo doc` for the host, opened, or synced into `docs/api` |
 | `i18n:sort` · `i18n:sort:check` · `i18n:audit` | sort the catalogs · check without writing · read-only completeness audit |
+| `i18n:seed` · `i18n:seed:check` | re-derive this app's English seed from its call sites · fail if it is stale |
 | `build:hooks-editor` | rebuild the vendored Monaco hooks-editor bundle |
 
 Two of those are worth knowing about before they surprise you. `ship-check` flags a **detached
 submodule worktree that differs from the recorded pointer**, because that reproduces stale sources at
 build time while `git status` looks clean. And the catalogs `i18n:sort` writes live in the shared
 `zpwr-i18n` submodule, not here — the resulting diff is committed there.
+
+### The English seed
+
+Every translatable string in this app is written twice already: once as a key and once as the
+English literal the call site falls back to — `T("zmax.file.save", "Save")`. That makes the English
+catalog **derivable**, and deriving it is the only way it stays true; a hand-maintained copy drifts
+from the call sites the moment somebody edits a label. `i18n:seed` extracts every `zmax.*` key
+into `frontend/i18n-seed/en.json`, and `frontend/i18n-seed.js` merges it **underneath** whatever
+locale is loaded, so a shipped translation always wins and the seed only fills what no catalog
+answers. Registering it the obvious way, as an `__i18nExtraBases` entry, merges the other way round
+and would override real translations with English — which nothing on an English screen would reveal.
+
+It is English-only on purpose. Generating 26 more locales from an English string is not translation,
+and a fabricated catalog is worse than a missing one: the runtime reads any present value as a
+successful lookup, so machine-filled French would render as French with nothing to distinguish it
+from the real thing. `i18n:seed:check` fails if a second file appears in that directory, if the seed
+is stale, or if one key is used with two different English strings — which is how three genuine bugs
+surfaced (`zmax.macros.letter_msg` was simultaneously the Record, Replay and Target register prompt).
+
+Translations still belong in the shared `zpwr-i18n` catalogs. The seed is the extract to hand a
+translator, not a place to translate.
 
 ## Releases
 

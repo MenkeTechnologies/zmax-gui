@@ -22,6 +22,8 @@
     "doc:sync": "pnpm run doc && command rm -rf docs/api && mkdir -p docs && cp -R app/src-tauri/target/doc docs/api",
     "i18n:sort": "node scripts/i18n-sort-catalogs.mjs",
     "i18n:sort:check": "node scripts/i18n-sort-catalogs.mjs --check",
+    "i18n:seed": "node scripts/i18n-extract-seed.mjs",
+    "i18n:seed:check": "node scripts/i18n-extract-seed.mjs --check",
     "i18n:audit": "node scripts/i18n-catalog-audit.mjs",
     "clean": "bash scripts/clean.sh",
     "bust": "bash scripts/bust.sh",

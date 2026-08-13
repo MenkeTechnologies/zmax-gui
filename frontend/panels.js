@@ -553,7 +553,7 @@
       if (!ZGui.contextMenu) return;
       rowEl.addEventListener("contextmenu", function (e) {
         ZGui.contextMenu.show(e, [
-          { label: T("zmax.file.open", "Open"), icon: "\u{1F4C2}", action: function () { if (!d.dir) { openInEditor(d.path); dlg.close(); } else load(d.path); } },
+          { label: T("zmax.panel.open", "Open"), icon: "\u{1F4C2}", action: function () { if (!d.dir) { openInEditor(d.path); dlg.close(); } else load(d.path); } },
           "---",
           { label: T("zmax.panel.rename", "Rename…"), icon: "✏", action: function () { renameEntry(d.path); } },
           { label: T("zmax.panel.duplicate", "Duplicate…"), icon: "⎘", action: function () { copyEntry(d.path); } },
@@ -691,7 +691,7 @@
             }).then(function (ok) { if (ok) invoke("git_discard", { path: en.path }).then(reload, function (err) { toast(String(err), "error"); }); });
           }));
           row.appendChild(gitActBtn("▤", T("zmax.panel.blame", "Blame"), "", function () { gitBlame(en.path); }));
-          row.appendChild(gitActBtn(T("zmax.file.open", "Open"), "", "", function () { openInEditor(en.path); dlgRef.close(); }));
+          row.appendChild(gitActBtn(T("zmax.panel.open", "Open"), "", "", function () { openInEditor(en.path); dlgRef.close(); }));
           list.appendChild(row);
         });
       }
@@ -914,7 +914,7 @@
         body: body,
         className: "zp-modal zp-git-modal",
         actions: [
-          { label: T("zmax.file.open", "Open"), close: true, onClick: function () { openInEditor(path); } },
+          { label: T("zmax.panel.open", "Open"), close: true, onClick: function () { openInEditor(path); } },
           { label: T("zmax.dialog.close", "Close"), close: true },
         ],
       });
@@ -1313,7 +1313,7 @@
       var pm;
       pm = pickerModal({
         title: T("zmax.panel.branches", "Git Branches"),
-        placeholder: T("zmax.panel.filter", "Filter branches…"),
+        placeholder: T("zmax.panel.filter_branches", "Filter branches…"),
         eager: true,
         countFmt: function (n) { return n + " " + T("zmax.panel.branches_n", "branches"); },
         actions: [
@@ -1559,7 +1559,7 @@
       find.type = "text"; find.className = "zp-input"; find.placeholder = T("zmax.panel.rename_find", "Match in file name (text or /regex/)…");
       find.autocomplete = "off"; find.autocapitalize = "off"; find.spellcheck = false; find.setAttribute("autocorrect", "off");
       var repl = document.createElement("input");
-      repl.type = "text"; repl.className = "zp-input"; repl.placeholder = T("zmax.panel.rename_to", "Replace with… ($1 for capture groups)");
+      repl.type = "text"; repl.className = "zp-input"; repl.placeholder = T("zmax.panel.replace_with", "Replace with… ($1 for capture groups)");
       repl.autocomplete = "off"; repl.autocapitalize = "off"; repl.spellcheck = false; repl.setAttribute("autocorrect", "off");
       body.appendChild(find);
       body.appendChild(repl);

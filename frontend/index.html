@@ -277,6 +277,11 @@
   <script src="lib/zgui-core/webui/licence.js"></script>
   <!-- shared i18n runtime (zpwr-i18n): window.t / loadLocale / detectLocale -->
   <script src="i18n.js"></script>
+  <!-- G3: this app's English seed (i18n-seed/en.json, derived from the call sites by
+       scripts/i18n-extract-seed.mjs), merged UNDER every loaded locale so a real translation always
+       wins and the seed only fills what no catalog answers. Must load after i18n.js — it wraps
+       window.loadLocale — and before menu.js / main.js, which are the two callers. -->
+  <script src="i18n-seed.js"></script>
 
   <!-- MacVim-style chrome widgets (menu bar, dialogs, file tree, drag-drop) — all zgui-core -->
   <script src="lib/zgui-core/webui/context-menu.js"></script>
