@@ -135,10 +135,20 @@ pub static COMMANDS: &[&str] = &[
     // Compensation snapshots (txn.rs). On the bus deliberately: a script that drives a mutation
     // through a raw command rather than through its reversible verb still needs a way to take, and
     // hand back, the pre-state — and `txn_list` is how a stranded snapshot becomes visible.
+    // The transaction journal. On the bus for the same reason the snapshots are: a script that
+    // drives a multi-step run through raw commands needs the same crash record the Batch Plan gets,
+    // and `txn_pending` / `txn_unwind` are how an interrupted run becomes visible and reversible
+    // from outside the app.
+    "txn_append",
+    "txn_close",
     "txn_discard",
     "txn_list",
+    "txn_open",
+    "txn_pending",
     "txn_restore",
+    "txn_seal",
     "txn_snapshot",
+    "txn_unwind",
     "zgui_reveal_scripts",
     "zgui_write_scripts",
     "zmax_exec_command",

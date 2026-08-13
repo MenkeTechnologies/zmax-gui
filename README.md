@@ -57,7 +57,8 @@ zmax-gui/
 │   ├─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 │   ├─ bus.rs            GUI Automation Bus socket: host commands + webview appshell.* verbs
 │   ├─ commands.rs       the host command list the bus advertises (+ its withheld exceptions)
-│   └─ txn.rs            content snapshots — what makes a file-mutating bus verb reversible
+│   └─ txn.rs            content snapshots + the on-disk transaction journal — what makes a
+│                        file-mutating bus verb reversible, and an interrupted run recoverable
 ├─ crates/
 │   ├─ zmax            the editor — vendored submodule, built → bundled sidecar
 │   ├─ zpwr-embed-terminal   shared PTY engine (submodule)
@@ -83,7 +84,8 @@ zmax-gui/
    ├─ i18n-seed.js · i18n-seed/  this app English seed, merged UNDER the loaded locale
    ├─ fb-backend.js             Tauri fs bridge + host shims for the shared file browser
    ├─ verbs.js                  the TYPED bus surface: the workbench as reversible verbs
-   ├─ plan-panel.js             Batch Plan: the shared arrangement grid + the transactional runner
+   ├─ plan-panel.js             Batch Plan: the shared arrangement grid + the transactional runner,
+   │                            its disk journal, and the interrupted-run recovery prompt
    ├─ plan-domain.js            its grid DOMAIN (operations × files) for zpwr-clip-engine
    ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
    ├─ wiring.test.cjs           what those surfaces actually invoke: PTY geometry, document search
@@ -194,6 +196,10 @@ results are fast and the editor stays the single source of truth.
   operations to apply to which files, then run the whole painting as **one transaction** that rolls
   every applied step back if any step fails. See
   [Batch Plan](#batch-plan-paint-the-refactor-run-it-as-one-transaction).
+- **Interrupted runs** — the same transaction, after the app stopped existing. A Batch Plan
+  journals itself to disk step by step, so a run the app died inside is enumerated at the next
+  launch and unwound on request — newest step first, and refusing any file that changed since. See
+  [The transaction outlives the process](#the-transaction-outlives-the-process).
 
 Every list, picker and filter in these panels is the **shared fzf matcher** (`ZGui.fzf`) with the
 matched characters highlighted — the same ranking and the same highlight as the `⌘K` palette and the
@@ -588,27 +594,70 @@ that: reads and previews as `pure`, and every file mutation as `inverse` with a 
 
 | Class | Verbs | Compensation |
 | --- | --- | --- |
-| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, and every `*.preview` dry run | none needed — nothing is written |
+| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted}`, and every `*.preview` dry run | none needed — nothing is written |
 | `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
 | `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
-| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop}`, `zmax.editor.{open,ex}` | none — repository-wide state, or the editor's own buffers |
+| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
 
 A mutating verb learns the exact paths it is about to touch **from its own dry run**, snapshots
 those, then applies. So `zmax.replace.apply` snapshots the files its preview named — source files and
 binary documents alike — and `undo()` restores every one of them byte for byte.
 
-Two refusals are load-bearing, because the alternative in each case is a verb that *looks* reversible:
+Three refusals are load-bearing, because the alternative in each case is a verb that *looks*
+reversible:
 
 - **A truncated preview refuses to run.** If the result cap cut the file list short, the snapshot
   would cover a prefix of what the mutation edits, so the verb rejects the call instead of
   half-covering itself.
 - **A mutation that changed nothing releases its snapshot** and reports no token, so a later abort
   cannot rewrite a file that verb never touched.
+- **A compensation refuses a file the world moved past.** A mutation that landed *seals* its
+  snapshot (`txn_seal`), recording a SHA-256 of what it left at every path it took. A sealed
+  `txn_restore` compares each file to that fingerprint, and where they differ it does not write: it
+  parks the pre-image beside the file as `<name>.zmax-undo-<token>` and reports the path under
+  `conflicted`. So an abort cannot destroy an edit that arrived after the step ran — the user's own,
+  a formatter-on-save, an LSP code action, or another instance driving the same tree — and cannot
+  lose the pre-state either. `conflicted` is not a failure; declining is the correct outcome, and
+  the status line says how many files were left alone rather than claiming a clean rollback.
 
 `frontend/verbs.test.cjs` drives the real surface against the real `automation.js` and asserts the
 protocol at the wire level — which paths were snapshotted, that the snapshot happens *between* the
 dry run and the apply, that an abort compensates newest-first, and that an irreversible verb is
 refused inside a transaction before it runs.
+
+### The transaction outlives the process
+
+`automation.js` journals a transaction in the **webview's memory**. That unwinds a step that failed
+while the app is alive, and it is nothing at all if the app dies mid-run — which is the one moment a
+forty-file refactor most needs its pre-images. A partially rewritten tree is then just a tree, and
+the snapshots that could put it back are orphans nothing can attribute.
+
+So a run also writes itself **to disk**, through `txn.rs`'s journal: `txn_open` before the first
+step, `txn_append` after each step *lands* (never before — a step that has not run has nothing to
+compensate), `txn_close` at either end. Each write goes down as a temp file that is flushed to the
+device and then renamed over the old one, so a crash sees the previous journal or the next one and
+never a torn file.
+
+A journal with no recorded outcome is a transaction that was interrupted:
+
+| command | verb | what it does |
+| --- | --- | --- |
+| `txn_pending` | `zmax.txn.interrupted` (`pure`) | every run that was never closed, newest first |
+| `txn_unwind` | `zmax.txn.unwind` (`irreversible`) | compensate one, newest step first, through the sealed restore |
+
+At launch the app checks for them and says so once, as a toast; `⌘K` ▸ **Interrupted runs** lists
+each with its label and step count and unwinds one on click. It is never automatic — unwinding
+rewrites files, and a run that was interrupted is not always a run that was unwanted, so the app
+reports what it found and the choice stays the user's. Every restore on that path is the sealed,
+conflict-refusing one, so a file touched since the crash is left alone with its pre-image parked
+beside it.
+
+`frontend/plan-journal.test.cjs` asserts the wire protocol: that a landed step seals *after* the
+mutation and *before* the result is returned, that steps are journalled after they land and in run
+order with their own tokens, that both the committed and the aborted path close the journal, that a
+declined file is surfaced rather than absorbed into "compensated", and that a host with no `txn_*`
+backend still runs on the in-memory journal alone. `txn.rs`'s own tests drive the crash end to end:
+open, two steps, no close — then find the journal and unwind it back to the original bytes.
 
 ### Batch Plan: paint the refactor, run it as one transaction
 

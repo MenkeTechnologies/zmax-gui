@@ -1986,6 +1986,13 @@
         id: "zmax.panel.batchPlan", label: P + T("zmax.plan.title", "Batch Plan"),
         run: function () { if (window.ZmaxPlan && typeof ZmaxPlan.open === "function") ZmaxPlan.open(); },
       },
+      // The other end of the same journal: runs that were never closed because the app died inside
+      // them. Reachable on demand, not only from the boot prompt, so a user who dismissed that
+      // prompt can still get back to it.
+      {
+        id: "zmax.panel.interruptedRuns", label: P + T("zmax.plan.recover_title", "Interrupted runs"),
+        run: function () { if (window.ZmaxPlan && typeof ZmaxPlan.openRecovery === "function") ZmaxPlan.openRecovery(); },
+      },
       { id: "zmax.panel.gitChanges", label: G + T("zmax.panel.git_changes", "Git Changes"), run: gitPanel },
       { id: "zmax.panel.gitBlame", label: G + T("zmax.panel.blame", "Blame") + "  ⇧⌘B", run: function () { gitBlame(); } },
       { id: "zmax.panel.docBlame", label: G + T("zmax.panel.doc_blame", "Document Blame") + "  ⇧⌘Y", run: function () { docBlame(); } },

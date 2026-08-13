@@ -224,6 +224,17 @@ pub fn run() {
             txn::txn_restore,
             txn::txn_discard,
             txn::txn_list,
+            // The transaction journal: the ordering of a multi-step run, written to disk BEFORE
+            // each step, so a run the app dies inside is enumerable (`txn_pending`) and unwindable
+            // (`txn_unwind`) at the next launch instead of being left half-applied. `txn_seal`
+            // records what each step left, which is what lets that unwind refuse a file something
+            // outside the transaction has changed since.
+            txn::txn_seal,
+            txn::txn_open,
+            txn::txn_append,
+            txn::txn_close,
+            txn::txn_pending,
+            txn::txn_unwind,
             // Git more (panels.js): repo-wide log, show-commit, diff two revisions, commit graph.
             git_more::git_log_repo,
             git_more::git_show_commit,

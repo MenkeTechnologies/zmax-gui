@@ -89,6 +89,10 @@ pub(crate) const WAS: &str = "_zmx_was";
 /// `txn_list` enumerates the snapshot store's token directories and writes nothing, so it reads
 /// like any other listing — including when the store holds stranded tokens, which is what it is for.
 ///
+/// `txn_pending` is the same kind of read one level up: it parses the journal files and returns the
+/// transactions that were never closed. It is the recovery prompt's query, and asking it changes
+/// nothing about whether those transactions get unwound.
+///
 /// `zoffice_commands` returns the office engine's command descriptors and takes no arguments at
 /// all. Its two siblings, `zoffice_invoke` and `zpdf_invoke`, are deliberately NOT here: each one
 /// carries an entire engine behind a `cmd` STRING, so its class is a property of the argument
@@ -143,6 +147,7 @@ const PURE: &[&str] = &[
     "stryke_bin_path",
     "sys_stats",
     "txn_list",
+    "txn_pending",
     "zmax_exec_command",
     "zoffice_commands",
 ];
@@ -190,6 +195,16 @@ const PURE: &[&str] = &[
 ///   needs a snapshot of the content it overwrote, which is another snapshot, not an inverse.
 /// * **`txn_discard`** — deletes a token directory outright. Nothing recreates it: the bytes it
 ///   held were the only copy of the pre-state it was recording.
+/// * **`txn_seal`** — overwrites a manifest with the post-verb fingerprints and flips a one-way
+///   flag. Un-sealing would have to restore the manifest as it was, which is a backup of the
+///   backup; and a token that can be un-sealed can be re-sealed against a THIRD party's content,
+///   which is precisely the clobbering restore the seal exists to refuse.
+/// * **`txn_open` / `txn_append` / `txn_close`** — the crash record itself. Its value is that it
+///   survives things going wrong, so a verb that erases part of it on a compensation pass would
+///   defeat the mechanism at the exact moment it matters. `txn_close` additionally releases the
+///   snapshots, and nothing recreates those.
+/// * **`txn_unwind`** — writes recorded bytes over the user's tree, for a whole transaction at
+///   once. Undoing that needs a snapshot of everything it overwrote, which is another transaction.
 const INVERSE: &[&str] = &[
     "fs_chmod",
     "fs_compress",
@@ -698,7 +713,11 @@ mod tests {
         let irreversible: Vec<&&str> = all.iter().filter(|c| rev_of(c) == "irreversible").collect();
         assert_eq!(
             (PURE.len(), INVERSE.len(), irreversible.len()),
-            (50, 13, 65),
+            // +6 for the transaction journal: `txn_pending` is a read of the journal files, and the
+            // five that write it (`txn_seal` / `txn_open` / `txn_append` / `txn_close` /
+            // `txn_unwind`) stay at the fail-fast default — see the rejected list on [`INVERSE`],
+            // where each one's reason is given.
+            (51, 13, 70),
             "host surface changed: reclassify the new commands, do not let them default. \
              unclassified = {irreversible:?}"
         );

@@ -180,3 +180,12 @@
 .zp-plan-warn { color: var(--yellow, #f9e900); }
 .zp-plan-err { color: var(--pink, #ff2a6d); }
 .zp-plan-busy { color: var(--cyan, #05d9e8); }
+/* Interrupted-run recovery rows: one journalled transaction per row, with its unwind button. Same
+   chrome as the plan modal it shares — plain border + background only, no shadow/transition, which
+   is what release WebKit renders identically to dev. */
+.zp-plan-recover-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.zp-plan-recover-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 10px; border: 1px solid rgba(5, 217, 232, .25); border-radius: 4px;
+  background: rgba(0, 0, 0, .25); }
+.zp-plan-recover-label { font-family: monospace; font-size: 11px; color: var(--text, #c8d6e5);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

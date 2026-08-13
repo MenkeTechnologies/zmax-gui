@@ -29,6 +29,12 @@
 //   2. A verb whose mutation did not actually land (`applied: false` — a preview, or nothing
 //      differed) discards its snapshot immediately and reports `rev: null`, so a later abort does
 //      not rewrite a file that this verb never touched.
+//   3. A verb that DID land SEALS its snapshot (`txn_seal`) before returning, recording what it left
+//      at every path it took. That is what turns the compensation from a promise into a checked one:
+//      a sealed `txn_restore` refuses any file that changed after the step ran — the user's own
+//      edit, a formatter, another instance driving the same tree — and parks the pre-image beside it
+//      instead of overwriting. `undo()` reports those under the result's `conflicted`, and they are
+//      not failures: declining is the correct outcome.
 //
 // Loaded after automation.js and before main.js installs the automation host.
 (function () {
@@ -50,6 +56,15 @@
   function discard(token) {
     if (!token) return Promise.resolve();
     return invoke("txn_discard", { token: token }).catch(function () {});
+  }
+  // Record what the mutation LEFT at each snapshotted path, so this token's compensation can tell
+  // "still as the verb left it" from "something else has been here since" and refuse the second
+  // rather than overwrite it (`txn.rs` → seal / restore). Sealing is best-effort by design: a token
+  // that could not be sealed still compensates, it just compensates blind — degrading to the old
+  // behaviour is right, refusing to arm the undo at all is not.
+  function seal(token) {
+    if (!token) return Promise.resolve(null);
+    return invoke("txn_seal", { token: token }).catch(function () { return null; });
   }
 
   /**
@@ -88,7 +103,9 @@
                 // verb never touched.
                 return discard(token).then(function () { return withTxn(res, null); });
               }
-              return withTxn(res, token);
+              // Seal BEFORE the result is handed back, so the fingerprints describe this verb's own
+              // output. Sealing later would race whatever the caller does next with the same files.
+              return seal(token).then(function () { return withTxn(res, token); });
             }, function (err) {
               // The mutation threw: its effect (if any) is unknown to us, but the snapshot is the
               // pre-state either way, so keep it and let the caller compensate explicitly.
@@ -99,9 +116,16 @@
       },
       undo: function (args, result) {
         var token = result && result.txn;
-        if (!token) return Promise.resolve({ restored: [], removed: [], failed: [] });
+        if (!token) return Promise.resolve({ restored: [], removed: [], failed: [], conflicted: [] });
         return invoke("txn_restore", { token: token }).then(function (report) {
-          emit("zmax.txn.compensated", { verb: spec.id, report: report });
+          // `conflicted` is not a failure: it is the compensation declining to destroy an edit that
+          // arrived after this step ran. Carried in the event so a script (or the plan's status
+          // line) can say which files it deliberately left alone, and where their pre-image went.
+          emit("zmax.txn.compensated", {
+            verb: spec.id,
+            report: report,
+            conflicted: ((report && report.conflicted) || []).length,
+          });
           return discard(token).then(function () { return report; });
         });
       },
@@ -369,6 +393,30 @@
         },
       },
       pure("zmax.txn.snapshots", "Live compensation snapshots", "txn_list", [], "array"),
+      // ── the crash record ────────────────────────────────────────────────────────────────────
+      // A multi-step run journals itself to disk BEFORE each step (plan-panel.js → `txn_open` /
+      // `txn_append` / `txn_close`), so a run this app died inside is still a transaction
+      // afterwards rather than a half-rewritten tree. These two are how it is seen and undone —
+      // from the recovery prompt at boot, or from a script over the bus.
+      pure("zmax.txn.interrupted", "Transactions that were never closed — what the app died inside",
+           "txn_pending", [], "array"),
+      {
+        // Irreversible, and not for want of trying: unwinding writes recorded bytes over the whole
+        // tree the transaction touched, so taking THAT back would need a snapshot of everything it
+        // overwrote — another transaction, not an inverse.
+        id: "zmax.txn.unwind", label: "Unwind an interrupted transaction (newest step first)",
+        rev: "irreversible", returns: "object", params: [P("id", "string", true)],
+        run: function (args) {
+          return invoke("txn_unwind", { id: (args || {}).id }).then(function (report) {
+            emit("zmax.txn.recovered", {
+              id: (args || {}).id,
+              restored: (report && report.restored) || 0,
+              conflicted: (report && report.conflicted) || 0,
+            });
+            return report;
+          });
+        },
+      },
 
       // ── mutations: every one snapshots the exact paths it will rewrite ──────────────────────
       reversible({
@@ -632,6 +680,11 @@
           return A && typeof A.txnActive === "function" ? A.txnActive() : null;
         },
       },
+      {
+        id: "zmax.txn.pending", returns: "array",
+        label: "Journalled transactions with no outcome — a previous run this app died inside",
+        get: function () { return invoke("txn_pending"); },
+      },
     ];
   }
 
@@ -641,7 +694,8 @@
       { id: "zmax.file.saved", payload: "{ path }" },
       { id: "zmax.search.run", payload: "{ hits }" },
       { id: "zmax.git.committed", payload: "{ root }" },
-      { id: "zmax.txn.compensated", payload: "{ verb, report }" },
+      { id: "zmax.txn.compensated", payload: "{ verb, report, conflicted }" },
+      { id: "zmax.txn.recovered", payload: "{ id, restored, conflicted }" },
     ];
   }
 

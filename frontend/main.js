@@ -101,6 +101,20 @@
     // Exposed so the Preferences language picker can re-render the whole UI after switching locale.
     window.zmaxRetranslate = function () { retranslate(shell); };
 
+    // Recovery check. A batch refactor journals itself to disk step by step (plan-panel.js →
+    // txn.rs), so a run this app died inside is still a transaction the next launch can see. If any
+    // is open, say so — once, quietly, as a toast — and put the unwind one click away. It is never
+    // performed automatically: unwinding rewrites files, and an interrupted run is not always an
+    // unwanted one. Deferred past boot so it cannot delay the editor coming up.
+    setTimeout(function () {
+      if (!window.ZmaxPlan || typeof ZmaxPlan.pending !== "function") return;
+      ZmaxPlan.pending().then(function (rows) {
+        if (!rows.length) return;
+        var msg = rows.length + " " + T("zmax.plan.recover_toast", "interrupted run(s) found — open “Interrupted runs” to unwind");
+        if (window.ZGui && ZGui.toast) ZGui.toast.show(msg, 8000, "warn");
+      }, function () { /* no backend: nothing to report */ });
+    }, 3000);
+
     // show + spawn the PTY, then exec the editor over the shell once it's up
     if (typeof window.showTerminal === "function") window.showTerminal();
     startEditor();
