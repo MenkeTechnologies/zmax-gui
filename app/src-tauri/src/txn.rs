@@ -61,11 +61,47 @@
 //! file. A journal with no `closed` outcome is a transaction that was interrupted;
 //! [`journal_pending`] enumerates them at the next launch and [`journal_unwind`] compensates one,
 //! newest step first, through the same sealed, conflict-refusing [`restore`].
+//!
+//! ── COVERAGE: the reach the undo does not have, and the proof that the rest of it landed ─────────
+//!
+//! Everything above answers "can this run be taken back?" with the run's own paperwork. That is a
+//! self-report. A snapshot covers the paths a verb NAMED, and a real refactor in a real tree changes
+//! more than that: an editor flushes a dirty buffer, a formatter-on-save rewrites a sibling, an LSP
+//! drops a cache, the user's other fifteen instances of this app are editing the same checkout. None
+//! of that is in any manifest, so the journal's own accounting reports a clean, complete rollback
+//! over a tree that has moved underneath it in ways it cannot put back.
+//!
+//! Two additions close that, and they are deliberately different mechanisms because they answer
+//! different questions at different costs:
+//!
+//! * [`witness_take`] stamps every file under the run's roots — length and mtime, **no content
+//!   read** — before the first step. [`witness_delta`] re-stamps and diffs. Subtract the paths the
+//!   steps declared and what is left is the run's **undeclared reach**: real changes, inside the
+//!   run's window, that no compensation covers. Stat-cost, not byte-cost, so it is affordable on the
+//!   whole project rather than on a hand-picked subset.
+//! * [`journal_coverage`] then verifies the declared half EXACTLY, by content: for each declared
+//!   path it hashes the transaction's own pre-image (the blob recorded by the EARLIEST step that
+//!   touched it — a later step recorded what the previous one left, not what the run started from)
+//!   and hashes what is at the path now. Equal is `at_preimage`; unequal is a [`Divergence`] that
+//!   names both hashes.
+//!
+//! Run after [`journal_unwind`], that is a receipt: an empty `divergent` is proof — byte-level, not
+//! a return code — that the tree is back where the run found it, and `undeclared` names exactly what
+//! the unwind could not reach. [`journal_close`] computes it once and stores it ON the journal
+//! before releasing the blobs it needs, so the receipt outlives the snapshots and any other process
+//! can read it back through `txn_journal` off the automation bus.
+//!
+//! The witness's honest limit, stated rather than papered over: length+mtime misses a rewrite that
+//! lands in the same nanosecond at the same size. It is a false negative in the *undeclared* half
+//! only — the declared half is content-verified and cannot miss it — and the alternative is hashing
+//! the whole project on every run, which nobody would leave switched on.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// A single recorded path inside a snapshot.
@@ -432,6 +468,15 @@ pub struct Journal {
     /// reached an end — which is exactly what makes `None` mean "this one was interrupted".
     #[serde(default)]
     pub closed: Option<String>,
+    /// The tree witness taken at open, when the caller named roots. `None` means this run has no
+    /// witness, and its undeclared reach is therefore UNKNOWABLE rather than empty — which is why
+    /// [`Coverage::witnessed`] exists instead of an empty `undeclared` list standing for both.
+    #[serde(default)]
+    pub witness: Option<String>,
+    /// The receipt, computed by [`journal_close`] while the pre-image blobs still exist and kept
+    /// afterwards. A closed transaction answers [`journal_coverage`] from here.
+    #[serde(default)]
+    pub coverage: Option<Coverage>,
 }
 
 fn journals_dir(base: &Path) -> PathBuf {
@@ -456,17 +501,33 @@ fn put_journal(base: &Path, j: &Journal) -> Result<(), String> {
     write_atomic(&dir.join(format!("{}.json", j.id)), &json)
 }
 
+fn now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
 /// Start a transaction's on-disk record and return its id.
-pub fn journal_open(base: &Path, label: &str) -> Result<String, String> {
+///
+/// `roots` are the directories whose files this run may touch. Naming them takes a [`witness_take`]
+/// stamp of the tree BEFORE the first step, which is what later lets [`journal_coverage`] separate
+/// "this run changed it and can put it back" from "this run's window changed it and nothing can".
+/// Passing none is legitimate and cheaper — the run is then journalled exactly as before, and its
+/// coverage reports `witnessed: false` rather than an empty and untrue "nothing else moved".
+///
+/// A witness that cannot be taken (an unreadable root) does not fail the open: a run that would
+/// otherwise have proceeded unwitnessed must not be blocked by the loss of an audit it never had.
+pub fn journal_open(base: &Path, label: &str, roots: &[String]) -> Result<String, String> {
+    let witness = if roots.is_empty() { None } else { witness_take(base, roots).ok() };
     let j = Journal {
         id: new_token(),
         label: label.to_string(),
-        opened_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0),
+        opened_ms: now_ms(),
         steps: Vec::new(),
         closed: None,
+        witness,
+        coverage: None,
     };
     put_journal(base, &j)?;
     Ok(j.id)
@@ -493,13 +554,23 @@ pub fn journal_append(base: &Path, id: &str, verb: &str, token: &str) -> Result<
 /// Both outcomes drop the tokens, because in both cases the pre-images have served their purpose —
 /// but the pre-images a conflicted restore PARKED live beside the user's files, not in the store, so
 /// nothing that was declined is lost here.
+///
+/// The receipt is computed FIRST, in this order and not any other: the content verification reads
+/// the pre-image blobs, and the next statement deletes them. Closing is the last moment the
+/// transaction can still prove anything about itself, so it is where the proof is taken.
 pub fn journal_close(base: &Path, id: &str, outcome: &str) -> Result<(), String> {
     if outcome != "committed" && outcome != "unwound" {
         return Err(format!("unknown transaction outcome: {outcome}"));
     }
     let mut j = journal(base, id)?;
+    if j.coverage.is_none() {
+        j.coverage = Some(coverage_of(base, &j));
+    }
     for s in &j.steps {
         let _ = discard(base, &s.token);
+    }
+    if let Some(w) = &j.witness {
+        let _ = witness_discard(base, w);
     }
     j.closed = Some(outcome.to_string());
     put_journal(base, &j)
@@ -545,6 +616,10 @@ pub struct UnwindReport {
     pub removed: usize,
     pub conflicted: usize,
     pub failed: usize,
+    /// The receipt, taken after the last step was compensated and before the blobs were released.
+    /// An empty [`Coverage::divergent`] is byte-level proof that every declared path is back at the
+    /// content the run found; [`Coverage::undeclared`] names what the unwind never reached.
+    pub coverage: Option<Coverage>,
 }
 
 /// Compensate an interrupted transaction: every recorded step, newest first, through the same
@@ -588,8 +663,261 @@ pub fn journal_unwind(base: &Path, id: &str) -> Result<UnwindReport, String> {
             }
         }
     }
+    // Closing takes the receipt while the pre-image blobs are still on disk, then releases them.
     journal_close(base, id, "unwound")?;
+    out.coverage = journal(base, id).ok().and_then(|j| j.coverage);
     Ok(out)
+}
+
+// ── the witness: what the tree actually did ─────────────────────────────────────────────────────
+
+/// One recorded path in a tree witness.
+///
+/// Length plus modification time, and deliberately not a content hash. The witness's whole purpose
+/// is to make "which files moved?" affordable over an entire project on every run, and stat-ing a
+/// tree is one syscall per file where hashing it is a read of every byte in it. The exactness that
+/// costs buys is spent where it is needed instead — on the declared paths, in [`coverage_of`].
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    pub len: u64,
+    /// Nanoseconds since the epoch, or `0` on a filesystem that will not say. A root whose stamps
+    /// are all `0` degrades this half of the audit to a length comparison; it does not break it.
+    pub mtime_ns: u128,
+}
+
+/// A tree as it stood at one instant, keyed by absolute path.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Witness {
+    pub id: String,
+    pub roots: Vec<String>,
+    pub taken_ms: u128,
+    pub paths: BTreeMap<String, Stamp>,
+}
+
+/// What a tree did between a witness and now.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct TreeDelta {
+    pub changed: Vec<String>,
+    pub created: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
+fn witness_dir(base: &Path) -> PathBuf {
+    base.join("witness")
+}
+
+fn witness_path(base: &Path, id: &str) -> Result<PathBuf, String> {
+    safe_id(id)?;
+    Ok(witness_dir(base).join(format!("{id}.json")))
+}
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if meta.is_dir() {
+        return None;
+    }
+    let mtime_ns = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Some(Stamp { len: meta.len(), mtime_ns })
+}
+
+/// Stamp every file under `roots`.
+///
+/// The walk is the project walk the rest of the app already uses
+/// ([`crate::project::walk_files`]), so the witness covers exactly the tree the fuzzy finder and the
+/// project search consider to be the project — `.git`, `target/`, `node_modules/` and the rest of
+/// its pruned set stay out. That is the right boundary here as well as there: a peer's `cargo build`
+/// churning `target/` during a refactor is not the refactor's reach, and reporting it as such would
+/// bury the four real files under forty thousand.
+///
+/// Hidden files ARE included (`show_hidden: true`), because a refactor that rewrites `.github/` or
+/// `.env` and cannot put it back is precisely the case worth reporting.
+///
+/// Stamping is one independent syscall per file, so it fans out across the thread pool the document
+/// search already brings in. The walk itself stays sequential — it is `read_dir`-bound and shared.
+pub fn witness_take(base: &Path, roots: &[String]) -> Result<String, String> {
+    let id = new_token();
+    let mut paths: BTreeMap<String, Stamp> = BTreeMap::new();
+    for r in roots {
+        let files = crate::project::walk_files(Path::new(r), true);
+        let stamped: Vec<(String, Stamp)> = files
+            .par_iter()
+            .filter_map(|p| stamp_of(p).map(|s| (p.to_string_lossy().into_owned(), s)))
+            .collect();
+        paths.extend(stamped);
+    }
+    let w = Witness { id: id.clone(), roots: roots.to_vec(), taken_ms: now_ms(), paths };
+    let dir = witness_dir(base);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec(&w).map_err(|e| e.to_string())?;
+    write_atomic(&witness_path(base, &id)?, &json)?;
+    Ok(id)
+}
+
+/// Read one witness.
+pub fn witness(base: &Path, id: &str) -> Result<Witness, String> {
+    let raw = fs::read(witness_path(base, id)?).map_err(|e| format!("no such witness: {id} ({e})"))?;
+    serde_json::from_slice(&raw).map_err(|e| e.to_string())
+}
+
+/// Drop a witness. Idempotent, for the same reason [`discard`] is.
+pub fn witness_discard(base: &Path, id: &str) -> Result<(), String> {
+    let p = witness_path(base, id)?;
+    if p.exists() {
+        fs::remove_file(&p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Re-stamp the witnessed roots and diff against the recording.
+pub fn witness_delta(base: &Path, id: &str) -> Result<TreeDelta, String> {
+    let w = witness(base, id)?;
+    let mut now: BTreeMap<String, Stamp> = BTreeMap::new();
+    for r in &w.roots {
+        let files = crate::project::walk_files(Path::new(r), true);
+        let stamped: Vec<(String, Stamp)> = files
+            .par_iter()
+            .filter_map(|p| stamp_of(p).map(|s| (p.to_string_lossy().into_owned(), s)))
+            .collect();
+        now.extend(stamped);
+    }
+    let mut d = TreeDelta::default();
+    for (path, stamp) in &now {
+        match w.paths.get(path) {
+            Some(was) if was == stamp => {}
+            Some(_) => d.changed.push(path.clone()),
+            None => d.created.push(path.clone()),
+        }
+    }
+    for path in w.paths.keys() {
+        if !now.contains_key(path) {
+            d.deleted.push(path.clone());
+        }
+    }
+    Ok(d)
+}
+
+// ── coverage: the reach the undo does not have, and the proof that the rest of it landed ────────
+
+/// A declared path that is NOT at the transaction's pre-image, with both fingerprints so the caller
+/// can say which one it is looking at rather than only that they differ.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Divergence {
+    pub path: String,
+    /// SHA-256 of the run's own pre-image, or `None` when the path did not exist before the run.
+    pub expected: Option<String>,
+    /// SHA-256 of what is at the path now, or `None` when nothing is.
+    pub actual: Option<String>,
+}
+
+/// What a transaction can and cannot account for.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Coverage {
+    pub id: String,
+    pub label: String,
+    /// Every distinct path some step recorded a pre-image for — what the run CAN put back.
+    pub declared: Vec<String>,
+    /// Paths the tree says moved inside the run's window that no step declared. The transaction
+    /// cannot compensate these, and naming them is the only honest thing it can do about them.
+    /// Empty when `witnessed` is false — where it means "not known", not "none".
+    pub undeclared: Vec<String>,
+    /// Declared paths whose current bytes equal the run's own pre-image.
+    pub at_preimage: Vec<String>,
+    /// Declared paths that are not. Expected mid-run; after an unwind, each one is a compensation
+    /// that did not land.
+    pub divergent: Vec<Divergence>,
+    /// False when the run recorded no witness, so `undeclared` is unknowable rather than empty.
+    pub witnessed: bool,
+}
+
+/// The transaction's own pre-image per path: the entry recorded by the EARLIEST step that touched
+/// it, paired with the token holding its blob.
+///
+/// Earliest, not latest, and the distinction is the whole correctness of the verification: when two
+/// steps rewrite one file, the second step's snapshot holds what the FIRST step produced. Verifying
+/// against that would call a half-unwound file "back where it started".
+///
+/// Directory entries are skipped — re-creating a directory destroys nothing, so there is no
+/// content claim to verify.
+fn preimage_of(base: &Path, j: &Journal) -> BTreeMap<String, (String, Entry)> {
+    let mut out: BTreeMap<String, (String, Entry)> = BTreeMap::new();
+    for s in &j.steps {
+        let man = match manifest(base, &s.token) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        for e in man.entries {
+            if e.dir {
+                continue;
+            }
+            out.entry(e.path.clone()).or_insert((s.token.clone(), e));
+        }
+    }
+    out
+}
+
+/// Compute the receipt against the store as it stands now.
+///
+/// Needs the pre-image blobs, so it is only meaningful before [`journal_close`] releases them —
+/// which is exactly where `journal_close` calls it.
+fn coverage_of(base: &Path, j: &Journal) -> Coverage {
+    let pre = preimage_of(base, j);
+    let mut cov = Coverage {
+        id: j.id.clone(),
+        label: j.label.clone(),
+        witnessed: j.witness.is_some(),
+        ..Default::default()
+    };
+    for (path, (token, e)) in &pre {
+        cov.declared.push(path.clone());
+        // `None` on both sides is a match, and a meaningful one: the run created the path and the
+        // compensation removed it again, so "absent" IS the pre-image.
+        let expected = e
+            .blob
+            .as_ref()
+            .and_then(|b| fingerprint(&base.join(token).join("blobs").join(b)));
+        let actual = fingerprint(Path::new(path));
+        if expected == actual {
+            cov.at_preimage.push(path.clone());
+        } else {
+            cov.divergent.push(Divergence { path: path.clone(), expected, actual });
+        }
+    }
+    if let Some(wid) = &j.witness {
+        if let Ok(d) = witness_delta(base, wid) {
+            let declared: BTreeSet<String> = pre.keys().cloned().collect();
+            let mut un: Vec<String> = d
+                .changed
+                .into_iter()
+                .chain(d.created)
+                .chain(d.deleted)
+                .filter(|p| !declared.contains(p))
+                .collect();
+            un.sort();
+            un.dedup();
+            cov.undeclared = un;
+        }
+    }
+    cov
+}
+
+/// The transaction's receipt.
+///
+/// A closed transaction answers from the copy [`journal_close`] stored, because recomputing it would
+/// read a store whose pre-images have been released and would report every declared path as
+/// divergent-from-nothing. An open one is computed live, which is what makes this answerable about
+/// an INTERRUPTED run before deciding whether to unwind it: the prompt can say "this run also
+/// changed four files it cannot put back" while the choice is still the user's.
+pub fn journal_coverage(base: &Path, id: &str) -> Result<Coverage, String> {
+    let j = journal(base, id)?;
+    if let Some(c) = j.coverage.clone() {
+        return Ok(c);
+    }
+    Ok(coverage_of(base, &j))
 }
 
 // ── Tauri commands (the bus verbs in `verbs.js` call these) ─────────────────────────────────────
@@ -627,9 +955,13 @@ pub fn txn_seal(token: String) -> Result<usize, String> {
 }
 
 /// Open a transaction's on-disk record; the id rides with every subsequent step.
+///
+/// `roots` are the directories the run may touch. Naming them witnesses the tree first, which is
+/// what lets the run's coverage separate what it changed from what merely changed while it ran.
+/// Omitting them keeps the pre-witness behaviour exactly.
 #[tauri::command]
-pub fn txn_open(label: String) -> Result<String, String> {
-    journal_open(&default_base(), &label)
+pub fn txn_open(label: String, roots: Option<Vec<String>>) -> Result<String, String> {
+    journal_open(&default_base(), &label, &roots.unwrap_or_default())
 }
 
 /// Record one executed step against an open transaction.
@@ -654,6 +986,22 @@ pub fn txn_pending() -> Result<Vec<Journal>, String> {
 #[tauri::command]
 pub fn txn_unwind(id: String) -> Result<UnwindReport, String> {
     journal_unwind(&default_base(), &id)
+}
+
+/// What a transaction can and cannot account for: the paths it can put back, the ones it cannot,
+/// and whether each declared path is currently at the run's own pre-image. Asked of an interrupted
+/// run BEFORE unwinding it, this is the honest version of the recovery prompt; asked after, it is
+/// the proof the unwind landed.
+#[tauri::command]
+pub fn txn_coverage(id: String) -> Result<Coverage, String> {
+    journal_coverage(&default_base(), &id)
+}
+
+/// One transaction's whole record, receipt included — how a peer process reads back what a finished
+/// run could and could not take responsibility for, after this app has forgotten it.
+#[tauri::command]
+pub fn txn_journal(id: String) -> Result<Journal, String> {
+    journal(&default_base(), &id)
 }
 
 #[cfg(test)]
@@ -890,7 +1238,7 @@ mod tests {
         fs::write(&a, b"a-before\n").unwrap();
         fs::write(&b, b"b-before\n").unwrap();
 
-        let id = journal_open(&base, "Batch Plan: 3 steps").unwrap();
+        let id = journal_open(&base, "Batch Plan: 3 steps", &[]).unwrap();
         for (path, after) in [(&a, "a-after\n"), (&b, "b-after\n")] {
             let token = snapshot(&base, &[path.to_string_lossy().into_owned()]).unwrap();
             fs::write(path, after.as_bytes()).unwrap();
@@ -923,7 +1271,7 @@ mod tests {
         fs::write(&f, b"v0\n").unwrap();
         let p = f.to_string_lossy().into_owned();
 
-        let id = journal_open(&base, "two steps, one file").unwrap();
+        let id = journal_open(&base, "two steps, one file", &[]).unwrap();
         for v in ["v1\n", "v2\n"] {
             let token = snapshot(&base, &[p.clone()]).unwrap();
             fs::write(&f, v.as_bytes()).unwrap();
@@ -949,7 +1297,7 @@ mod tests {
         let f = work.join("a.txt");
         fs::write(&f, b"x\n").unwrap();
 
-        let id = journal_open(&base, "clean run").unwrap();
+        let id = journal_open(&base, "clean run", &[]).unwrap();
         let token = snapshot(&base, &[f.to_string_lossy().into_owned()]).unwrap();
         journal_append(&base, &id, "zmax.sort.apply", &token).unwrap();
         journal_close(&base, &id, "committed").unwrap();
@@ -964,7 +1312,7 @@ mod tests {
     #[test]
     fn a_closed_transaction_refuses_further_steps() {
         let base = temp_base("journal-closed");
-        let id = journal_open(&base, "done").unwrap();
+        let id = journal_open(&base, "done", &[]).unwrap();
         journal_close(&base, &id, "committed").unwrap();
         assert!(journal_append(&base, &id, "zmax.sort.apply", "tok").is_err());
         assert!(journal_close(&base, &id, "sideways").is_err(), "only known outcomes are accepted");
@@ -980,7 +1328,7 @@ mod tests {
         let f = work.join("a.txt");
         fs::write(&f, b"before\n").unwrap();
 
-        let id = journal_open(&base, "one good, one lost").unwrap();
+        let id = journal_open(&base, "one good, one lost", &[]).unwrap();
         let lost = snapshot(&base, &[f.to_string_lossy().into_owned()]).unwrap();
         journal_append(&base, &id, "zmax.sort.apply", &lost).unwrap();
         let good = snapshot(&base, &[f.to_string_lossy().into_owned()]).unwrap();
@@ -1005,8 +1353,238 @@ mod tests {
         }
         // A journal directory must not read as a snapshot token, or `list` would offer it to
         // `restore`, which would fail on a manifest that is not one.
-        journal_open(&base, "x").unwrap();
+        journal_open(&base, "x", &[]).unwrap();
         assert!(!list(&base).unwrap().contains(&"journals".to_string()));
+        for bad in ["../evil", "a/b", "", ".."] {
+            assert!(witness_path(&base, bad).is_err(), "witness id {bad:?} must be rejected");
+        }
+        // Same rule for the witness store: it lives beside the tokens, and a `restore` handed
+        // "witness" would fail on a manifest that is not one.
+        witness_take(&base, &[base.to_string_lossy().into_owned()]).unwrap();
+        assert!(!list(&base).unwrap().contains(&"witness".to_string()));
+    }
+
+    // ── coverage: the reach the undo does not have, and the proof the rest of it landed ─────────
+
+    /// Two files change while the run is in flight. One of them is the run's own step; the other is
+    /// nobody's — an editor flushing a buffer, a formatter, one of the other instances. The
+    /// transaction's own paperwork cannot tell them apart, and would report a complete rollback over
+    /// a tree it half-covers. The witness can, and this is the capability: naming the file the undo
+    /// will not reach, before the user is asked whether to unwind.
+    #[test]
+    fn an_undeclared_change_is_named_as_reach_the_undo_does_not_have() {
+        let base = temp_base("cov-undeclared");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let mine = work.join("mine.txt");
+        let theirs = work.join("theirs.txt");
+        fs::write(&mine, b"mine-before\n").unwrap();
+        fs::write(&theirs, b"theirs-before\n").unwrap();
+
+        let id = journal_open(&base, "one step", &[work.to_string_lossy().into_owned()]).unwrap();
+        let token = snapshot(&base, &[mine.to_string_lossy().into_owned()]).unwrap();
+        fs::write(&mine, b"mine-after-the-step\n").unwrap();
+        seal(&base, &token).unwrap();
+        journal_append(&base, &id, "zmax.sort.apply", &token).unwrap();
+        // Not the transaction. Written at a different LENGTH on purpose, so the detection does not
+        // depend on the filesystem's mtime granularity.
+        fs::write(&theirs, b"theirs, rewritten by something else entirely\n").unwrap();
+        // And a file the run never knew existed.
+        fs::write(work.join("appeared.txt"), b"an LSP cache, say\n").unwrap();
+
+        let cov = journal_coverage(&base, &id).unwrap();
+        assert!(cov.witnessed, "the run named roots, so its reach is knowable");
+        assert_eq!(
+            cov.declared,
+            vec![mine.to_string_lossy().into_owned()],
+            "only the stepped path is compensable: {cov:?}"
+        );
+        let undeclared = cov.undeclared.clone();
+        assert!(
+            undeclared.contains(&theirs.to_string_lossy().into_owned()),
+            "a file changed by something else inside the run's window must be named: {undeclared:?}"
+        );
+        assert!(
+            undeclared.contains(&work.join("appeared.txt").to_string_lossy().into_owned()),
+            "so must one that appeared: {undeclared:?}"
+        );
+        assert!(
+            !undeclared.contains(&mine.to_string_lossy().into_owned()),
+            "the run's OWN step is declared and must not be reported as out of reach: {undeclared:?}"
+        );
+    }
+
+    /// The receipt. After an unwind, "restored: 2" is the compensation's own word for it; this is
+    /// the check that the bytes agree — every declared path hashed against the run's own pre-image.
+    #[test]
+    fn an_unwind_proves_every_declared_path_is_back_at_the_runs_own_pre_image() {
+        let base = temp_base("cov-proof");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let a = work.join("a.txt");
+        let b = work.join("b.txt");
+        fs::write(&a, b"a-before\n").unwrap();
+        fs::write(&b, b"b-before\n").unwrap();
+
+        let id = journal_open(&base, "two steps", &[work.to_string_lossy().into_owned()]).unwrap();
+        for (path, after) in [(&a, "a-after\n"), (&b, "b-after\n")] {
+            let token = snapshot(&base, &[path.to_string_lossy().into_owned()]).unwrap();
+            fs::write(path, after.as_bytes()).unwrap();
+            seal(&base, &token).unwrap();
+            journal_append(&base, &id, "zmax.cleanup.apply", &token).unwrap();
+        }
+
+        let report = journal_unwind(&base, &id).unwrap();
+        let cov = report.coverage.expect("an unwind must publish its receipt");
+        assert!(
+            cov.divergent.is_empty(),
+            "a clean unwind must leave nothing off its own pre-image: {:?}",
+            cov.divergent
+        );
+        assert_eq!(cov.at_preimage.len(), 2, "both declared paths must be proven back: {cov:?}");
+        assert!(cov.at_preimage.contains(&a.to_string_lossy().into_owned()));
+        assert!(cov.at_preimage.contains(&b.to_string_lossy().into_owned()));
+    }
+
+    /// Which snapshot is "the pre-image" when two steps rewrote one file: the FIRST one. The second
+    /// step recorded what the first step produced, so verifying against it would call a file that is
+    /// only half unwound "back where it started" — the exact false clean bill this receipt exists to
+    /// make impossible.
+    #[test]
+    fn verification_uses_the_earliest_steps_pre_image_not_the_latest() {
+        let base = temp_base("cov-earliest");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let f = work.join("a.txt");
+        fs::write(&f, b"v0\n").unwrap();
+        let p = f.to_string_lossy().into_owned();
+
+        let id = journal_open(&base, "two steps, one file", &[]).unwrap();
+        for v in ["v1\n", "v2\n"] {
+            let token = snapshot(&base, &[p.clone()]).unwrap();
+            fs::write(&f, v.as_bytes()).unwrap();
+            seal(&base, &token).unwrap();
+            journal_append(&base, &id, "zmax.sort.apply", &token).unwrap();
+        }
+        // Only the newest step is taken back — a half-finished unwind, which is what a partial
+        // recovery leaves behind.
+        let last = journal(&base, &id).unwrap().steps.last().unwrap().token.clone();
+        restore(&base, &last).unwrap();
+        assert_eq!(fs::read(&f).unwrap(), b"v1\n");
+
+        let cov = journal_coverage(&base, &id).unwrap();
+        assert!(cov.at_preimage.is_empty(), "v1 is not where the RUN found this file: {cov:?}");
+        assert_eq!(cov.divergent.len(), 1, "the half-unwound file must be reported: {cov:?}");
+        assert_eq!(cov.divergent[0].path, p);
+        assert_ne!(
+            cov.divergent[0].expected, cov.divergent[0].actual,
+            "the receipt must name both hashes, and they must differ"
+        );
+    }
+
+    /// A path the run CREATED is back at its pre-image when it is absent again — the pre-image is
+    /// "nothing", and a verification that only compared content would report the one honest outcome
+    /// here as a divergence.
+    #[test]
+    fn a_created_file_removed_again_counts_as_back_at_the_pre_image() {
+        let base = temp_base("cov-created");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let f = work.join("new.txt");
+
+        let id = journal_open(&base, "creates one file", &[]).unwrap();
+        let token = snapshot(&base, &[f.to_string_lossy().into_owned()]).unwrap();
+        fs::write(&f, b"the verb created me\n").unwrap();
+        seal(&base, &token).unwrap();
+        journal_append(&base, &id, "zmax.cleanup.apply", &token).unwrap();
+
+        let cov = journal_unwind(&base, &id).unwrap().coverage.expect("receipt");
+        assert!(!f.exists());
+        assert_eq!(
+            cov.at_preimage,
+            vec![f.to_string_lossy().into_owned()],
+            "absent-again IS the pre-image: {cov:?}"
+        );
+        assert!(cov.divergent.is_empty(), "{cov:?}");
+    }
+
+    /// A run that named no roots has no witness, and an empty `undeclared` from it would read as
+    /// "nothing else moved" when the truth is "nobody looked".
+    #[test]
+    fn a_run_with_no_witness_says_so_rather_than_reporting_an_empty_reach() {
+        let base = temp_base("cov-unwitnessed");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let f = work.join("a.txt");
+        fs::write(&f, b"x\n").unwrap();
+
+        let id = journal_open(&base, "no roots", &[]).unwrap();
+        let token = snapshot(&base, &[f.to_string_lossy().into_owned()]).unwrap();
+        fs::write(&f, b"y\n").unwrap();
+        seal(&base, &token).unwrap();
+        journal_append(&base, &id, "zmax.sort.apply", &token).unwrap();
+        fs::write(work.join("elsewhere.txt"), b"changed by someone else\n").unwrap();
+
+        let cov = journal_coverage(&base, &id).unwrap();
+        assert!(!cov.witnessed, "an unwitnessed run must not claim to know its reach: {cov:?}");
+        assert!(cov.undeclared.is_empty(), "and must not invent one: {cov:?}");
+    }
+
+    /// The receipt has to outlive the evidence. `journal_close` releases every pre-image blob, so a
+    /// coverage recomputed afterwards would hash nothing and report the whole run as divergent — a
+    /// finished, clean transaction retroactively accusing itself.
+    #[test]
+    fn the_receipt_survives_the_snapshots_it_was_computed_from() {
+        let base = temp_base("cov-durable");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let f = work.join("a.txt");
+        fs::write(&f, b"before\n").unwrap();
+
+        let id = journal_open(&base, "kept run", &[work.to_string_lossy().into_owned()]).unwrap();
+        let token = snapshot(&base, &[f.to_string_lossy().into_owned()]).unwrap();
+        fs::write(&f, b"after\n").unwrap();
+        seal(&base, &token).unwrap();
+        journal_append(&base, &id, "zmax.sort.apply", &token).unwrap();
+        journal_close(&base, &id, "committed").unwrap();
+
+        assert!(!list(&base).unwrap().contains(&token), "the blobs must have been released");
+        let cov = journal_coverage(&base, &id).unwrap();
+        assert_eq!(
+            cov.declared,
+            vec![f.to_string_lossy().into_owned()],
+            "the receipt must still name what the run covered: {cov:?}"
+        );
+        assert_eq!(
+            cov.divergent.len(),
+            1,
+            "a committed run's file is legitimately off its pre-image, and the receipt says so: {cov:?}"
+        );
+        assert!(cov.witnessed, "and remembers that its reach was measured: {cov:?}");
+    }
+
+    /// The witness's three outcomes are three different facts, and a delta that collapsed them would
+    /// make "the run deleted a file it cannot bring back" indistinguishable from "the run wrote one".
+    #[test]
+    fn the_witness_reports_created_changed_and_deleted_separately() {
+        let base = temp_base("witness-delta");
+        let work = base.join("work");
+        fs::create_dir_all(&work).unwrap();
+        // Written at different lengths on purpose: the change must be visible without relying on
+        // the filesystem's mtime granularity inside one test run.
+        fs::write(work.join("stays.txt"), b"unchanged\n").unwrap();
+        fs::write(work.join("edited.txt"), b"short\n").unwrap();
+        fs::write(work.join("removed.txt"), b"here for now\n").unwrap();
+
+        let w = witness_take(&base, &[work.to_string_lossy().into_owned()]).unwrap();
+        fs::write(work.join("edited.txt"), b"much longer than it was before\n").unwrap();
+        fs::remove_file(work.join("removed.txt")).unwrap();
+        fs::write(work.join("added.txt"), b"new\n").unwrap();
+
+        let d = witness_delta(&base, &w).unwrap();
+        assert_eq!(d.changed, vec![work.join("edited.txt").to_string_lossy().into_owned()], "{d:?}");
+        assert_eq!(d.created, vec![work.join("added.txt").to_string_lossy().into_owned()], "{d:?}");
+        assert_eq!(d.deleted, vec![work.join("removed.txt").to_string_lossy().into_owned()], "{d:?}");
     }
 
     #[test]

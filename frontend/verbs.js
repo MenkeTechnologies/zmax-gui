@@ -400,6 +400,17 @@
       // from the recovery prompt at boot, or from a script over the bus.
       pure("zmax.txn.interrupted", "Transactions that were never closed — what the app died inside",
            "txn_pending", [], "array"),
+      // ── the audit ───────────────────────────────────────────────────────────────────────────
+      // What a run can put back (`declared`), what it cannot (`undeclared` — paths the tree says
+      // moved inside the run's window that no step recorded), and whether every declared path is
+      // currently at the run's OWN pre-image, hashed rather than asserted (`at_preimage` /
+      // `divergent`). Asked of an interrupted run it is the honest recovery prompt; asked after an
+      // unwind it is the proof the unwind landed. `witnessed: false` means the run named no roots,
+      // so an empty `undeclared` there means "nobody looked", not "nothing else moved".
+      pure("zmax.txn.coverage", "What a transaction can and cannot take back, with the proof",
+           "txn_coverage", [P("id", "string", true)], "object"),
+      pure("zmax.txn.record", "One transaction's whole record, receipt included",
+           "txn_journal", [P("id", "string", true)], "object"),
       {
         // Irreversible, and not for want of trying: unwinding writes recorded bytes over the whole
         // tree the transaction touched, so taking THAT back would need a snapshot of everything it
@@ -408,10 +419,16 @@
         rev: "irreversible", returns: "object", params: [P("id", "string", true)],
         run: function (args) {
           return invoke("txn_unwind", { id: (args || {}).id }).then(function (report) {
+            // The receipt rides on the event, not just in the return value: a peer process
+            // subscribed to this bus learns in the same breath that a run was taken back AND how
+            // much of the tree that undo could not reach.
+            var cov = (report && report.coverage) || null;
             emit("zmax.txn.recovered", {
               id: (args || {}).id,
               restored: (report && report.restored) || 0,
               conflicted: (report && report.conflicted) || 0,
+              undeclared: cov && cov.witnessed ? (cov.undeclared || []).length : null,
+              divergent: cov ? (cov.divergent || []).length : null,
             });
             return report;
           });
@@ -695,7 +712,7 @@
       { id: "zmax.search.run", payload: "{ hits }" },
       { id: "zmax.git.committed", payload: "{ root }" },
       { id: "zmax.txn.compensated", payload: "{ verb, report, conflicted }" },
-      { id: "zmax.txn.recovered", payload: "{ id, restored, conflicted }" },
+      { id: "zmax.txn.recovered", payload: "{ id, restored, conflicted, undeclared, divergent }" },
     ];
   }
 

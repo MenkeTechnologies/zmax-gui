@@ -235,6 +235,13 @@ pub fn run() {
             txn::txn_close,
             txn::txn_pending,
             txn::txn_unwind,
+            // The transaction's own audit. `txn_coverage` answers what a run can put back, what it
+            // cannot (paths the tree says moved inside its window that no step declared), and
+            // whether every declared path is currently at the run's own pre-image — content, not a
+            // return code. `txn_journal` hands the whole record back, receipt included, so a peer
+            // process can read what a finished run took responsibility for.
+            txn::txn_coverage,
+            txn::txn_journal,
             // Git more (panels.js): repo-wide log, show-commit, diff two revisions, commit graph.
             git_more::git_log_repo,
             git_more::git_show_commit,

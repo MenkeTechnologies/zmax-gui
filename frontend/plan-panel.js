@@ -69,6 +69,7 @@
   }
 
   var files = [];        // [{ path, rel }] — the plan's run order, refreshed on each open
+  var root = null;       // the project root, and the witness root a run is opened against
   var grid = null;
   var dom = null;        // the loaded plan-domain module
   var statusEl = null;
@@ -99,8 +100,16 @@
    *
    * A host with no `txn_*` backend (the in-browser preview) degrades to the in-memory journal alone
    * rather than refusing to run.
+   *
+   * The open also hands the backend the project root as the run's WITNESS root. Everything above is
+   * the run's own paperwork, and a run's paperwork can only ever describe the run: the tree it is
+   * rewriting is shared with the user's editor, with save hooks, and — in this user's setup — with
+   * fifteen other instances of this app. The witness is what lets the finished run say which files
+   * moved that none of its steps recorded, instead of reporting a clean rollback across a tree it
+   * only half covers. A run whose root cannot be resolved still runs; it is then unwitnessed, and
+   * its coverage says so rather than claiming an empty reach.
    */
-  function run(steps) {
+  function run(steps, root) {
     var A = Z().automation;
     if (!A || typeof A.txnBegin !== "function") {
       return Promise.reject(new Error("the automation bus is not loaded"));
@@ -113,7 +122,7 @@
     var txn = A.txnBegin();
     var done = 0;
     var jid = null;
-    var chain = invoke("txn_open", { label: label })
+    var chain = invoke("txn_open", { label: label, roots: root ? [root] : null })
       .then(function (id) { jid = id; }, function () { jid = null; });
     steps.forEach(function (s) {
       chain = chain.then(function () {
@@ -133,6 +142,15 @@
       if (!jid) return Promise.resolve();
       return invoke("txn_close", { id: jid, outcome: outcome }).catch(function () {});
     }
+    /**
+     * The receipt, read back AFTER the close — which is where the backend computes it, while the
+     * pre-image blobs it hashes against still exist. Never fatal: a run whose receipt could not be
+     * read reports `coverage: null`, which the caller must read as "unknown", never as "clean".
+     */
+    function receipt() {
+      if (!jid) return Promise.resolve(null);
+      return invoke("txn_coverage", { id: jid }).catch(function () { return null; });
+    }
     // `txnAbort` counts a step as compensated whenever its `undo()` resolved, and a sealed restore
     // that DECLINED a file resolves — correctly, since declining is the right outcome. So the count
     // alone would report a clean rollback over files it deliberately left alone. verbs.js emits the
@@ -143,19 +161,33 @@
     var off = (typeof A.on === "function")
       ? A.on("zmax.txn.compensated", function (p) { conflicted += (p && p.conflicted) || 0; })
       : function () {};
-    function finish(out) { off(); out.conflicted = conflicted; return out; }
+    // `uncovered` is the count of paths the tree says moved inside this run's window that no step
+    // recorded — the reach this run's undo does not have. `null` rather than 0 when the run had no
+    // witness or the receipt could not be read, because "nobody looked" and "nothing else moved"
+    // are the two answers a status line must never print with the same words.
+    function finish(out) {
+      off();
+      out.conflicted = conflicted;
+      var cov = out.coverage;
+      out.uncovered = (cov && cov.witnessed) ? (cov.undeclared || []).length : null;
+      return out;
+    }
     return chain.then(
       function () {
         return A.txnCommit(txn)
           .then(function () { return close("committed"); })
-          .then(function () { return finish({ ok: true, done: done, txnId: jid }); });
+          .then(receipt)
+          .then(function (cov) { return finish({ ok: true, done: done, txnId: jid, coverage: cov }); });
       },
       function (err) {
         // The failing step never landed (automation.js journals only AFTER a successful run), so the
         // abort unwinds exactly the steps that did.
         return A.txnAbort(txn).then(function (report) {
-          return close("unwound").then(function () {
-            return finish({ ok: false, done: done, error: String((err && err.message) || err), report: report, txnId: jid });
+          return close("unwound").then(receipt).then(function (cov) {
+            return finish({
+              ok: false, done: done, error: String((err && err.message) || err),
+              report: report, txnId: jid, coverage: cov,
+            });
           });
         });
       }
@@ -179,6 +211,16 @@
    */
   function recover(id) {
     return invoke("txn_unwind", { id: id });
+  }
+
+  /**
+   * What one transaction can and cannot account for. On a run that has NOT been unwound yet this is
+   * the honest half of the recovery prompt: how much of the tree moved inside that run's window
+   * that unwinding will not reach. Answers `null` on any host that cannot tell, which the caller
+   * must render as silence rather than as a zero.
+   */
+  function coverage(id) {
+    return invoke("txn_coverage", { id: id }).catch(function () { return null; });
   }
 
   function refreshFiles(root) {
@@ -229,10 +271,18 @@
             var stale = dom.staleCells(plan, files);
             var steps = dom.planSteps(plan, operations(), files);
             if (!steps.length) { setStatus(T("zmax.plan.empty", "Nothing painted."), "warn"); return; }
-            run(steps).then(function (res) {
+            run(steps, root).then(function (res) {
+              // What the run changed that it could NOT have taken back. Said on a SUCCESS too, and
+              // that is the point: a clean "Applied 12/12" over a tree where three other files also
+              // moved is the report a transaction cannot honestly make about a shared checkout.
+              var reach = res.uncovered
+                ? " · " + res.uncovered + " " +
+                  T("zmax.plan.uncovered", "other files changed while this ran (outside this undo)")
+                : "";
               if (res.ok) {
-                setStatus(T("zmax.plan.done", "Applied") + " " + res.done + "/" + steps.length, "ok");
-                toast(T("zmax.plan.done", "Applied") + " " + res.done + "/" + steps.length);
+                setStatus(T("zmax.plan.done", "Applied") + " " + res.done + "/" + steps.length + reach,
+                          res.uncovered ? "warn" : "ok");
+                toast(T("zmax.plan.done", "Applied") + " " + res.done + "/" + steps.length + reach);
               } else {
                 var comp = (res.report && res.report.compensated) || 0;
                 var failed = (res.report && res.report.failed) || [];
@@ -244,7 +294,8 @@
                   // rollback declined to overwrite. Said out loud, because a silent "rolled back 12"
                   // over a tree where two files were left as they are is the report lying.
                   (res.conflicted ? " (" + res.conflicted + " " +
-                    T("zmax.plan.recover_conflicted", "left alone (changed since)") + ")" : ""),
+                    T("zmax.plan.recover_conflicted", "left alone (changed since)") + ")" : "") +
+                  reach,
                   "err"
                 );
                 toast(T("zmax.plan.failed", "Failed") + ": " + res.error, "error");
@@ -272,7 +323,7 @@
 
     setStatus(T("zmax.plan.loading", "Loading the project's files…"));
     projectRoot()
-      .then(refreshFiles)
+      .then(function (dir) { root = dir || null; return refreshFiles(dir); })
       .then(function () {
         return Promise.all([import(GRID_BASE + "index.js"), import(DOMAIN_MODULE)]);
       })
@@ -346,6 +397,14 @@
           text.className = "zp-plan-recover-label";
           text.textContent = (j.label || j.id) + " · " + ((j.steps || []).length) + " " +
                              T("zmax.plan.steps_word", "steps");
+          // The reach, appended when the backend answers. Asked BEFORE the unwind on purpose: the
+          // decision the user is being handed is "put this back", and how much of the crash's
+          // damage this will not touch belongs in front of them while it is still a choice.
+          coverage(j.id).then(function (cov) {
+            if (!cov || !cov.witnessed || !(cov.undeclared || []).length) return;
+            text.textContent += " · " + cov.undeclared.length + " " +
+              T("zmax.plan.uncovered", "other files changed while this ran (outside this undo)");
+          });
           var btn = document.createElement("button");
           btn.className = "zg-btn";
           btn.textContent = T("zmax.plan.recover_unwind", "Unwind");
@@ -359,8 +418,16 @@
                        T("zmax.plan.recover_conflicted", "left alone (changed since)");
               }
               if (r.failed) msg += " · " + r.failed + " " + T("zmax.plan.recover_failed", "unrecoverable");
+              // The proof, not the count: `divergent` is every declared path whose bytes are still
+              // not what the run found, hashed after the restore ran. Empty means the tree is back.
+              var cov = r.coverage || null;
+              var off = cov ? (cov.divergent || []).length : 0;
+              if (off) {
+                msg += " · " + off + " " +
+                       T("zmax.plan.recover_divergent", "not back at their previous content");
+              }
               status.textContent = msg;
-              toast(msg, r.conflicted || r.failed ? "warn" : "");
+              toast(msg, r.conflicted || r.failed || off ? "warn" : "");
               render();
             }, function (e) {
               btn.disabled = false;
@@ -390,6 +457,7 @@
     run: run,
     pending: pending,
     recover: recover,
+    coverage: coverage,
     openRecovery: openRecovery,
   };
 })();

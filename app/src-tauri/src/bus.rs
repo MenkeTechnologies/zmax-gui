@@ -93,6 +93,13 @@ pub(crate) const WAS: &str = "_zmx_was";
 /// transactions that were never closed. It is the recovery prompt's query, and asking it changes
 /// nothing about whether those transactions get unwound.
 ///
+/// `txn_coverage` and `txn_journal` are the audit of the same records. `txn_journal` is a plain
+/// parse. `txn_coverage` does more work than either — it re-walks the witnessed roots and hashes the
+/// declared paths and their pre-image blobs — but every byte of it is a read: it stamps, it hashes,
+/// it compares, and it writes nothing anywhere. Its cost is not its class, and a verb whose whole
+/// purpose is to report honestly on what a transaction did must itself be safe to ask at any point,
+/// including from inside another transaction.
+///
 /// `zoffice_commands` returns the office engine's command descriptors and takes no arguments at
 /// all. Its two siblings, `zoffice_invoke` and `zpdf_invoke`, are deliberately NOT here: each one
 /// carries an entire engine behind a `cmd` STRING, so its class is a property of the argument
@@ -146,6 +153,8 @@ const PURE: &[&str] = &[
     "snippet_list",
     "stryke_bin_path",
     "sys_stats",
+    "txn_coverage",
+    "txn_journal",
     "txn_list",
     "txn_pending",
     "zmax_exec_command",
@@ -717,7 +726,9 @@ mod tests {
             // five that write it (`txn_seal` / `txn_open` / `txn_append` / `txn_close` /
             // `txn_unwind`) stay at the fail-fast default — see the rejected list on [`INVERSE`],
             // where each one's reason is given.
-            (51, 13, 70),
+            // +2 for the transaction audit: `txn_coverage` and `txn_journal` both read those same
+            // records and write nothing, so both are pure.
+            (53, 13, 70),
             "host surface changed: reclassify the new commands, do not let them default. \
              unclassified = {irreversible:?}"
         );

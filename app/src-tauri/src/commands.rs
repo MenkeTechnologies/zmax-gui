@@ -139,9 +139,14 @@ pub static COMMANDS: &[&str] = &[
     // drives a multi-step run through raw commands needs the same crash record the Batch Plan gets,
     // and `txn_pending` / `txn_unwind` are how an interrupted run becomes visible and reversible
     // from outside the app.
+    // The transaction's audit. `txn_coverage` is the one verb here a *peer* app has a reason to
+    // call: it is how another process learns what a zmax-gui run changed that it cannot take back,
+    // and `txn_journal` is how it reads that back after the run has ended.
     "txn_append",
     "txn_close",
+    "txn_coverage",
     "txn_discard",
+    "txn_journal",
     "txn_list",
     "txn_open",
     "txn_pending",

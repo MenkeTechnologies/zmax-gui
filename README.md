@@ -57,8 +57,9 @@ zmax-gui/
 │   ├─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 │   ├─ bus.rs            GUI Automation Bus socket: host commands + webview appshell.* verbs
 │   ├─ commands.rs       the host command list the bus advertises (+ its withheld exceptions)
-│   └─ txn.rs            content snapshots + the on-disk transaction journal — what makes a
-│                        file-mutating bus verb reversible, and an interrupted run recoverable
+│   └─ txn.rs            content snapshots, the on-disk transaction journal, and the tree witness —
+│                        what makes a mutating verb reversible, an interrupted run recoverable, and
+│                        a finished run able to name the files its undo did NOT reach
 ├─ crates/
 │   ├─ zmax            the editor — vendored submodule, built → bundled sidecar
 │   ├─ zpwr-embed-terminal   shared PTY engine (submodule)
@@ -200,6 +201,11 @@ results are fast and the editor stays the single source of truth.
   journals itself to disk step by step, so a run the app died inside is enumerated at the next
   launch and unwound on request — newest step first, and refusing any file that changed since. See
   [The transaction outlives the process](#the-transaction-outlives-the-process).
+- **The reach the undo does not have** — a run witnesses the tree before its first step, so when it
+  finishes it can name the files that moved inside its window that *no step recorded* and it
+  therefore cannot put back. The paths it can are verified the other way, by content, against the
+  run's own pre-image — so an unwind ends with a byte-level receipt rather than its own word for it.
+  See [The reach the undo does not have](#the-reach-the-undo-does-not-have).
 
 Every list, picker and filter in these panels is the **shared fzf matcher** (`ZGui.fzf`) with the
 matched characters highlighted — the same ranking and the same highlight as the `⌘K` palette and the
@@ -594,7 +600,7 @@ that: reads and previews as `pure`, and every file mutation as `inverse` with a 
 
 | Class | Verbs | Compensation |
 | --- | --- | --- |
-| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted}`, and every `*.preview` dry run | none needed — nothing is written |
+| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted,coverage,record}`, and every `*.preview` dry run | none needed — nothing is written |
 | `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
 | `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
 | `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
@@ -658,6 +664,49 @@ order with their own tokens, that both the committed and the aborted path close 
 declined file is surfaced rather than absorbed into "compensated", and that a host with no `txn_*`
 backend still runs on the in-memory journal alone. `txn.rs`'s own tests drive the crash end to end:
 open, two steps, no close — then find the journal and unwind it back to the original bytes.
+
+### The reach the undo does not have
+
+Everything above is the transaction's account **of itself**, and a transaction can only ever account
+for what its own steps named. The tree is not the transaction's: the checkout is shared with the
+editor, with save hooks, with an LSP writing caches, and — in the setup this app is built for — with
+the other instances of it running in the other tmux panes. So "rolled back 12/12" can be true about
+the run and false about the tree, and nothing in the paperwork above can tell the difference.
+
+A run that names its **roots** gets a *witness* first: every file under them stamped by length and
+mtime, with **no content read**. When the run closes, the stamps are taken again and diffed, the
+paths the steps declared are subtracted, and what is left is the run's **undeclared reach** — real
+changes, inside the run's window, that no compensation covers. They are reported, not compensated;
+naming them is the only honest thing a transaction can do about a file it never recorded.
+
+The declared half is verified the other way round, exactly, by content: each declared path is hashed
+against the run's own pre-image — the blob recorded by the **earliest** step that touched it, since a
+later step recorded what the previous one *left*, not what the run started from. Equal is
+`at_preimage`; unequal is a `divergent` entry naming both hashes. After an unwind an empty
+`divergent` is byte-level proof that the tree is back where the run found it, rather than the
+restore's own word for it.
+
+| command | verb | what it does |
+| --- | --- | --- |
+| `txn_open(label, roots)` | — | witnesses `roots` before the first step; omitting them keeps the older, unwitnessed behaviour |
+| `txn_coverage` | `zmax.txn.coverage` (`pure`) | `declared` / `undeclared` / `at_preimage` / `divergent` for one run |
+| `txn_journal` | `zmax.txn.record` (`pure`) | the whole record, receipt included |
+
+The receipt is computed inside `txn_close`, while the pre-image blobs it hashes against still exist,
+and stored **on** the journal — so it outlives the snapshots and a peer process can read back what a
+finished run could and could not take responsibility for. `zmax.txn.recovered` carries the same two
+numbers, so a subscriber learns in one message that a run was undone *and* how much of the tree that
+undo never reached. `witnessed: false` means the run named no roots: an empty `undeclared` there
+means "nobody looked", never "nothing else moved", and the Batch Plan's status line prints nothing
+rather than a zero for it.
+
+The two mechanisms are split on cost, not on taste. Stamping is one syscall per file; hashing is
+every byte. Measured over this repository's own tree as it stood at the time — 28,297 files with
+2.89 GB under them — the witness cost 782 ms to take and 641 ms to diff, where hashing the same
+files in parallel cost 12.7 s per pass. The exactness that buys is spent where correctness needs
+it: on the handful of declared paths, where a stat comparison would not be good enough. The stat half's honest limit is a rewrite landing in the
+same nanosecond at the same length; it is a false negative in the *undeclared* half only, and the
+declared half cannot miss it.
 
 ### Batch Plan: paint the refactor, run it as one transaction
 

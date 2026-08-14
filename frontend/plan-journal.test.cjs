@@ -47,6 +47,12 @@ function boot(replies) {
     txn_close: () => null,
     txn_pending: () => [],
     txn_unwind: () => ({ id: "jrnl1", restored: 0, conflicted: 0, failed: 0, steps: [] }),
+    // An unwitnessed receipt is the conservative default: the run named no roots, so its reach is
+    // unknown rather than empty, and a status line must say nothing rather than say zero.
+    txn_coverage: () => ({
+      id: "jrnl1", label: "", declared: [], undeclared: [], at_preimage: [], divergent: [],
+      witnessed: false,
+    }),
   }, replies || {});
 
   const win = { ZGui: {} };
@@ -208,4 +214,106 @@ test("the crash record is on the bus, classified, and the unwind is not pretendi
   assert.equal(pending.rev, "pure", "listing interrupted runs changes nothing");
   assert.equal(unwind.rev, "irreversible",
     "unwinding rewrites the tree; claiming inverse would let a transaction journal it with no way back");
+});
+
+// ── the audit: the reach the undo does not have ───────────────────────────────────────────────
+//
+// Everything above checks that the run's own paperwork is honest ABOUT ITSELF. It cannot be honest
+// about the tree: the checkout is shared with the user's editor, with save hooks, and with the other
+// instances of this app. A run that names its roots gets a witness, and the receipt that comes back
+// separates "this run changed it and can put it back" from "this moved while the run was going and
+// nothing here can".
+
+test("a run hands the backend the tree it may touch, so its undo can say what it did not cover", async () => {
+  const env = boot({
+    convert_file: () => ({ applied: true }),
+    sort_file_lines: () => ({ applied: true }),
+  });
+  const res = await env.plan.run(STEPS, "/proj");
+  assert.equal(res.ok, true, `run failed: ${res.error}`);
+  assert.deepEqual(env.of("txn_open")[0].args.roots, ["/proj"],
+    "without a witness root the finished run cannot tell its own edits from everyone else's");
+
+  // A run with no resolvable root still runs — unwitnessed, and honest about being unwitnessed.
+  const blind = boot({
+    convert_file: () => ({ applied: true }),
+    sort_file_lines: () => ({ applied: true }),
+  });
+  await blind.plan.run(STEPS);
+  assert.equal(blind.of("txn_open")[0].args.roots, null,
+    "an absent root must be sent as absent, not as a witness over nothing");
+});
+
+test("a clean run still reports the files that moved outside it, and reads the receipt after the close", async () => {
+  const env = boot({
+    convert_file: () => ({ applied: true }),
+    sort_file_lines: () => ({ applied: true }),
+    txn_coverage: () => ({
+      id: "jrnl1", label: "Batch Plan: 2 steps",
+      declared: ["/proj/a.txt", "/proj/b.txt"],
+      // A formatter, an LSP cache, another instance of this app — whatever it was, this run cannot
+      // put it back, and "Applied 2/2" alone would imply it could.
+      undeclared: ["/proj/vendor.lock", "/proj/.cache/x"],
+      at_preimage: [], divergent: [], witnessed: true,
+    }),
+  });
+  const res = await env.plan.run(STEPS, "/proj");
+  assert.equal(res.ok, true, `run failed: ${res.error}`);
+  assert.equal(res.uncovered, 2, "the run's uncompensable reach must reach the caller");
+  assert.deepEqual(res.coverage.undeclared, ["/proj/vendor.lock", "/proj/.cache/x"]);
+
+  // Order is load-bearing: the backend computes the receipt inside `txn_close`, while the pre-image
+  // blobs it hashes against still exist. Asking before the close reads a receipt that is not there.
+  const seq = env.calls.map((c) => c.cmd);
+  assert.ok(seq.indexOf("txn_close") < seq.indexOf("txn_coverage"),
+    `the receipt must be read after the close, got ${seq.join(" ")}`);
+});
+
+test("an unwitnessed run reports an unknown reach, never a clean one", async () => {
+  const env = boot({
+    convert_file: () => ({ applied: true }),
+    sort_file_lines: () => ({ applied: true }),
+    txn_coverage: () => ({
+      id: "jrnl1", label: "", declared: ["/proj/a.txt"], undeclared: [],
+      at_preimage: [], divergent: [], witnessed: false,
+    }),
+  });
+  const res = await env.plan.run(STEPS);
+  assert.strictEqual(res.uncovered, null,
+    "an empty reach from a run that never looked must not render as the number zero");
+});
+
+test("a receipt the host cannot produce is unknown, and never blocks the run", async () => {
+  const env = boot({
+    convert_file: () => ({ applied: true }),
+    sort_file_lines: () => ({ applied: true }),
+    txn_coverage: () => new Error("no such command"),
+  });
+  const res = await env.plan.run(STEPS, "/proj");
+  assert.equal(res.ok, true, `an unauditable host must still run: ${res.error}`);
+  assert.strictEqual(res.coverage, null);
+  assert.strictEqual(res.uncovered, null);
+});
+
+test("the audit is on the bus as a read, and the recovery event carries the reach", async () => {
+  const env = boot({
+    txn_unwind: (a) => ({
+      id: a.id, restored: 2, conflicted: 0, failed: 0, steps: [],
+      coverage: { id: a.id, label: "", declared: [], undeclared: ["/proj/other"], at_preimage: [], divergent: [], witnessed: true },
+    }),
+  });
+  const surface = env.A.surface();
+  const cov = surface.verbs.find((v) => v.id === "zmax.txn.coverage");
+  const rec = surface.verbs.find((v) => v.id === "zmax.txn.record");
+  assert.ok(cov && rec, "both audit verbs must be published");
+  assert.equal(cov.rev, "pure", "auditing a transaction hashes and stamps; it writes nothing");
+  assert.equal(rec.rev, "pure");
+
+  const seen = [];
+  env.A.on("zmax.txn.recovered", (p) => seen.push(p));
+  await env.A.call("zmax.txn.unwind", { id: "jA" });
+  assert.equal(seen.length, 1, "the recovery must be announced");
+  assert.equal(seen[0].undeclared, 1,
+    "a peer process learns in one message that a run was taken back AND what the undo missed");
+  assert.equal(seen[0].divergent, 0, "and that every declared path is back at its previous content");
 });
