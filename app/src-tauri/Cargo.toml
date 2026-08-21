@@ -18,6 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Local wall-clock stamps for the app log. Already in the lock transitively;
+# named here because the log writer calls it directly.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Licence gate, shared by the paid suite. `licence` is OFF by default:
 # a plain build never checks anything, so local development is unaffected.
 account-client = { git = "https://github.com/MenkeTechnologies/zpwr-account.git", features = ["tauri"] }

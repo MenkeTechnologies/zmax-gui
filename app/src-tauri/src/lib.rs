@@ -64,7 +64,11 @@ fn log_line(app: &tauri::AppHandle, source: &str, message: &str) {
     let Ok(dir) = app.path().app_log_dir() else { return };
     let _ = std::fs::create_dir_all(&dir);
     let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("zmax.log")) else { return };
-    let _ = writeln!(f, "[{source}] {message}");
+    // Local wall-clock stamp, not unix seconds: this file is read by a human in
+    // the Diagnostics panel, where a bare epoch says nothing about when a line
+    // was written or how long a gap between two of them was.
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let _ = writeln!(f, "[{ts}] [{source}] {message}");
 }
 
 /// System stats for the powerline (real per-second deltas via persistent handles).
