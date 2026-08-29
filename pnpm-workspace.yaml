@@ -3,3 +3,21 @@ packages:
 
 allowBuilds:
   esbuild: true
+
+# monaco-editor pins `dompurify` to an EXACT version (0.55.1 -> 3.2.7), so
+# nothing in the tree can resolve the sanitizer forward on its own and
+# Dependabot's security update fails outright with
+# `security_update_not_possible` (latest-resolvable 3.2.7, lowest-non-vulnerable
+# 3.4.13). This override is what lets the declared dependency reach a
+# non-vulnerable version.
+#
+# What it does NOT do is change what a monaco bundle executes. monaco imports
+# its own vendored copy at `esm/vs/base/browser/dompurify/dompurify.js` — still
+# 3.2.7 — and only a monaco upgrade moves that. 0.56.0 vendors 3.4.8, but it is
+# not a drop-in: it removed `esm/vs/editor/edcore.main.js` and the whole
+# `esm/vs/basic-languages/` tree, both of which `zpwr-hooks-editor`'s entry
+# imports by path, so esbuild fails with "Cannot read file" and no bundle is
+# produced. And 0.56.0 is the latest release, so even taking it would leave the
+# 3.4.13 floor unmet.
+overrides:
+  dompurify: ">=3.4.14"
