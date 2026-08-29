@@ -41,7 +41,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14   # Apple silicon → aarch64
+          # macos-latest, not a pinned macos-14: the rest of the org's release
+          # workflows track macos-latest, and the pinned image's toolchain is the
+          # most likely reason one tree-sitter grammar (autohotkey) fails to compile
+          # here while the identical source builds locally. Not confirmed — the
+          # grammar builder swallows the compiler diagnostic — but the pin has no
+          # reason to exist either way.
+          - runner: macos-latest   # Apple silicon → aarch64
             arch: aarch64
           # x86_64 REMOVED from the matrix: the macos-13 Intel runners exist but
           # their free-tier queue never scheduled this job — every release from
