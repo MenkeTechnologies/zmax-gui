@@ -96,7 +96,19 @@ jobs:
         run: cargo build --release --locked --bin zmax
 
       - name: Install JS deps
-        run: pnpm install --frozen-lockfile
+        env:
+          SUBMODULES_PAT: ${{ secrets.SUBMODULES_PAT }}
+        run: |
+          # package.json pulls zgui-core straight from git
+          # ("github:MenkeTechnologies/zgui-core#<sha>") and that repo is private,
+          # so pnpm's own `git fetch` needs credentials the checkout step's token
+          # never reaches. Without this it dies with
+          #   fatal: could not read Username for 'https://github.com'
+          # The same PAT the submodule checkout already uses is enough.
+          git config --global \
+            url."https://x-access-token:${SUBMODULES_PAT}@github.com/".insteadOf \
+            "https://github.com/"
+          pnpm install --frozen-lockfile
 
       # tauri build runs beforeBuildCommand: copy-embed-terminal + prepare-stryke-sidecar (downloads
       # the strykelang release for this arch) + prepare-zmax-sidecar (stages the release editor).
