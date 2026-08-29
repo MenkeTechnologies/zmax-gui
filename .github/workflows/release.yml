@@ -8,6 +8,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Re-run a release without cutting a new tag — the only way to retry a build
+  # after fixing the workflow itself, since a re-run of a tag build replays the
+  # workflow as it was AT that tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and upload to"
+        required: true
 
 permissions:
   contents: write
@@ -23,7 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Create the GitHub release (idempotent)
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes || true
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --generate-notes || true
 
   macos:
     needs: create-release
@@ -33,8 +43,12 @@ jobs:
         include:
           - runner: macos-14   # Apple silicon → aarch64
             arch: aarch64
-          - runner: macos-13   # Intel → x86_64
-            arch: x86_64
+          # x86_64 REMOVED from the matrix: the macos-13 Intel runners exist but
+          # their free-tier queue never scheduled this job — every release from
+          # v0.2.2 (2026-07-11) to v0.2.18 (2026-08-01) sat queued until the
+          # 24-hour timeout and reported the whole run as failed. Same call, and
+          # the same reason, as awkrs' release matrix. Restore the leg when GHA
+          # reinstates Intel macOS capacity.
     runs-on: ${{ matrix.runner }}
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,7 +100,7 @@ jobs:
       - name: Package + upload .dmg and .app
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ inputs.tag || github.ref_name }}"
           # Find the produced bundle under the tauri target dir (resilient to the app/src-tauri layout
           # and any target-triple subdir).
           DMG="$(find app/src-tauri/target -path '*/release/bundle/dmg/*.dmg' | head -1)"
