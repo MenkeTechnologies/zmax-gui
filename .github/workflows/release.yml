@@ -80,9 +80,14 @@ jobs:
           key: ${{ matrix.arch }}-cargo-${{ hashFiles('crates/zmax/Cargo.lock', 'app/src-tauri/Cargo.lock') }}
           restore-keys: ${{ matrix.arch }}-cargo-
 
+      # pnpm 11, matching the version that writes the lockfile. `overrides`
+      # lives in pnpm-workspace.yaml, which only pnpm 10+ reads (pnpm 11 no
+      # longer reads the `pnpm` field from package.json at all), so pnpm 9 saw
+      # no overrides configured, found one recorded in the lockfile, and
+      # refused the frozen install with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
