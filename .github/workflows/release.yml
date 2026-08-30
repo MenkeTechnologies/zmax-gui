@@ -124,6 +124,20 @@ jobs:
       # has to ask for it explicitly — without this the packaging step below finds no
       # .dmg and fails with "bundle not found".
       - name: Build the app bundle
+        # `app/src-tauri` takes `account-client` from the private zpwr-account
+        # repo, so the cargo build inside `tauri build` needs the same
+        # credentials `pnpm install` above was given — without them it dies with
+        #   failed to authenticate when downloading repository
+        #   * attempted to find username/password via git's `credential.helper`
+        # cargo's bundled git (libgit2) does not read GIT_CONFIG_*, so it is
+        # pointed at the git CLI, which does. That is cargo's own advice in the
+        # same error: "if the git CLI succeeds then `net.git-fetch-with-cli` may
+        # help here".
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.SUBMODULES_PAT }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
         run: pnpm tauri build --bundles app,dmg
 
       - name: Package + upload .dmg and .app
