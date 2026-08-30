@@ -111,8 +111,12 @@ jobs:
 
       # tauri build runs beforeBuildCommand: copy-embed-terminal + prepare-stryke-sidecar (downloads
       # the strykelang release for this arch) + prepare-zmax-sidecar (stages the release editor).
+      # --bundles app,dmg: tauri.conf.json pins bundle.targets to ["app"] so a local
+      # `pnpm localinstall` skips the slow DMG step. Releases still ship a .dmg, so CI
+      # has to ask for it explicitly — without this the packaging step below finds no
+      # .dmg and fails with "bundle not found".
       - name: Build the app bundle
-        run: pnpm tauri build
+        run: pnpm tauri build --bundles app,dmg
 
       - name: Package + upload .dmg and .app
         run: |
