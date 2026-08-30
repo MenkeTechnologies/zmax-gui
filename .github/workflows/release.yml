@@ -89,9 +89,12 @@ jobs:
         with:
           version: 11
 
+      # Node 22 is the floor pnpm 11.24 states ("requires at least Node.js
+      # v22.13"); it reaches for `node:sqlite`, which Node 20 does not have,
+      # so the pnpm shim died with ERR_UNKNOWN_BUILTIN_MODULE before running.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       # Build the editor in release so the staged sidecar is a release binary (the prep script prefers
