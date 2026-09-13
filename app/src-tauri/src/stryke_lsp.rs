@@ -140,6 +140,49 @@ pub async fn stryke_lsp_stop(state: State<'_, StrykeLspState>) -> Result<(), Str
     Ok(())
 }
 
+/// Sequence that makes each hook script's temp path its own; see `write_hook_script`.
+static HOOK_SCRIPT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Write one hook's stryke script to a temp file that belongs to that run alone.
+///
+/// The name was `{app}-hook-<pid>.stk` — one path for the whole process. This command is async
+/// and each body runs on its own blocking thread, so two hooks in flight together shared it:
+/// the second write truncated the script the first had just handed to `stryke`, and whichever
+/// finished first deleted the file the other was still running from. A counter gives every call
+/// its own path, and `create_new` refuses a path left behind by an earlier process that held
+/// this pid rather than silently writing through it.
+fn write_hook_script(script: &str) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+    let mut last = None;
+    for _ in 0..1024 {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "zmax-gui-hook-{}-{}.stk",
+            std::process::id(),
+            HOOK_SCRIPT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                f.write_all(script.as_bytes())?;
+                return Ok(path);
+            }
+            // Only a name this process has not used yet is safe to write into; step to the next.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "no free hook script path",
+        )
+    }))
+}
+
 /// Run a hook's stryke script on a BACKGROUND thread (non-blocking — the UI shows a spinner while it
 /// runs). Writes the script to a temp `.stk` and runs `stryke run <file>` with the event context as
 /// JSON on stdin. Returns `{ ok, code, stdout, stderr }`. Kept off the engine mutex so a long hook
@@ -151,9 +194,7 @@ pub async fn run_stryke_hook(
 ) -> Result<serde_json::Value, String> {
     let ctx_json = serde_json::to_string(&ctx).unwrap_or_else(|_| "{}".to_string());
     tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
-        let mut path = std::env::temp_dir();
-        path.push(format!("zmax-gui-hook-{}.stk", std::process::id()));
-        std::fs::write(&path, &script).map_err(|e| format!("write temp hook: {e}"))?;
+        let path = write_hook_script(&script).map_err(|e| format!("write temp hook: {e}"))?;
         let mut child = Command::new(resolve_stryke())
             .arg("run")
             .arg(&path)
