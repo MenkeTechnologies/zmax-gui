@@ -66,12 +66,19 @@ zmax-gui/
 │   ├─ zmax            the editor — vendored submodule, built → bundled sidecar
 │   ├─ zpwr-embed-terminal   shared PTY engine (submodule)
 │   ├─ zpwr-file-browser     shared multi-pane file browser: `crate/` (fs_* commands, watcher) + webui
-│   ├─ zpwr-i18n             shared 27-locale i18n runtime + catalogs (submodule)
+│   ├─ zpwr-i18n             shared i18n runtime + locale catalogs (submodule)
+│   ├─ zmax-gui-core         the GUI surface — menu.js, editor-state.js, editor-hud.js — copied
+│   │                        into frontend/ by copy-webui.mjs (single source)
+│   ├─ zgui-core             the toolkit's Rust side: the `zgui-shell` crate (data dir + prefs)
+│   ├─ zgui-bridge           GUI Automation Bus socket (bus.rs)
+│   ├─ zwire-host            in-process system stats for the powerline status bar
+│   ├─ zpwr-hooks-editor     Monaco hooks editor, bundled into frontend/lib by copy-hooks-editor.mjs
 │   ├─ zoffice-core          office engine (docx/odt/xlsx/ods/pptx/odp): rlib + mountable view
 │   └─ zpdf-core             PDF engine: rlib + mountable viewer
 ├─ scripts/
 │   ├─ mvim              terminal launcher (open files in the running window)
-│   ├─ copy-{webui,embed-terminal,i18n,file-browser,doc-views}.mjs  sync shared webui into frontend/
+│   ├─ copy-{zgui-core,webui,embed-terminal,i18n,file-browser,doc-views,hooks-editor}.mjs
+│   │                    sync shared webui into frontend/ (run by beforeDev/BuildCommand)
 │   ├─ clean/bust/rebuild/nuke/ship-check/deploy.sh        the shared app lifecycle scripts
 │   ├─ run-js-tests.mjs   one discovery path for every JS suite (pnpm test + test:js)
 │   ├─ i18n-{sort-catalogs,catalog-audit,extract-seed}.mjs  catalog sort · completeness audit ·
@@ -79,9 +86,11 @@ zmax-gui/
 │   └─ prepare-{zmax,stryke}-sidecar.mjs   stage the bundled binaries
 └─ frontend/
    ├─ index.html · main.js      mounts ZGui.appShell + the fullscreen terminal
-   ├─ menu.js                   the MacVim GUI surface (all zgui widgets → PTY)
+   ├─ menu.js                   the MacVim GUI surface (zgui widgets + native app menu → PTY)
    ├─ editor-state.js           editor state reconstructed FROM the PTY stream (the return path)
    ├─ editor-hud.js             buffer/tab bar + status strip + minimap, driven by that state
+   │                            (these three are copied from crates/zmax-gui-core, gitignored)
+   ├─ tmux-config.js            wires ZGui.tmux so each tile is its own editor on its own PTY
    ├─ panels.js · panels.css    the project workbench overlays (quick-open, find-in-files, …)
    ├─ doc-view.js               the in-app document pane over mountZpdf / mountZoffice
    ├─ i18n-seed.js · i18n-seed/  this app English seed, merged UNDER the loaded locale
@@ -91,8 +100,10 @@ zmax-gui/
    │                            its disk journal, and the interrupted-run recovery prompt
    ├─ plan-domain.js            its grid DOMAIN (operations × files) for zpwr-clip-engine
    ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
-   ├─ wiring.test.cjs           what those surfaces actually invoke: PTY geometry, document search
-   ├─ lib/zgui-core             the shared widget library (submodule)
+   ├─ wiring.test.cjs           what those surfaces actually invoke: PTY geometry, document search,
+   │                            the Git Commit panel, Keep / Flush Lines
+   ├─ lib/zgui-core             the shared widget library, copied from the pinned `zgui-core` pnpm
+   │                            git dependency by copy-zgui-core.mjs (gitignored)
    └─ lib/zpwr-clip-engine      the shared arrangement-grid engine (submodule)
 ```
 
@@ -446,17 +457,28 @@ itself, it drives `zmax`). zmax (a Helix fork) has **both** buffers and a real v
 family, so the GUI drives each with its own menu — the **Buffers** menu cycles/closes open buffers,
 the **Tabs** menu manages tabpages (each holds its own split layout).
 
-- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / Align / Structure / View / Buffers / Window / Tabs / Folds / Marks / Bookmarks / Macros / Snippets / Code / Spell / Abbrev / Git / Help.
+- **Menu bar** (`ZGui.menubar`) — File / Edit / Search / Text / Extract / Align / Transform /
+  Structure / View / Buffers / Window / Workbench / Tabs / Folds / Narrow / Jump / Marks / Bookmarks /
+  Harpoon / Macros / Snippets / Code / Spell / Abbrev / Insert / Mail / Git / Embedded / Help.
+- **Native macOS menu** — the same tree, mirrored item for item into the app menu (`nativeSpec`,
+  realized by zgui-core's `ZGui.menu.install()`), with an app menu of About / Settings… (`⌘,`) /
+  Services / Hide / Quit. The ⌘ accelerators live on these native items, so each chord has one binding.
 - **Search menu** — in-buffer engine commands (distinct from the file-based Find-in-Files workbench):
-  whole-buffer regex Replace (`:%s`, delimiter auto-chosen so a `/` in the pattern is safe),
-  case-preserving Replace (vim-abolish `:%S` — `foo/Foo/FOO` → `bar/Bar/BAR`), Count Matches
-  (`:count-matches`), and Clear Search Highlight (`:nohlsearch`).
+  **Regex Lab** (a pattern tried live against sample text, with a match count), **Transform by
+  Example**, **Reshape by Example** and **Simultaneous Rename** (rules synthesized from
+  `before → after` rows, or a declared token permutation, compiled to `:%s` — described in the
+  [zmax-gui-core README](https://github.com/MenkeTechnologies/zmax-gui-core)), whole-buffer regex
+  Replace (`:%s`, delimiter auto-chosen so a `/` in the pattern is safe), case-preserving Replace
+  (vim-abolish `:%S` — `foo/Foo/FOO` → `bar/Bar/BAR`), Count Matches (`:count-matches`), and Clear
+  Search Highlight (`:nohlsearch`).
 - **Text menu** — in-buffer, live-selection line transforms bridged into the PTY (distinct from the
   file-based align-columns / whitespace panels in the project workbench, which act on a picked file):
   comment / uncomment the selected lines (`SPC c c` → `toggle_comments`); sort lines, with
   reverse / numeric / unique variants (`:sort-lines [--reverse|--numeric|--unique]`); sort the ranges
   in the selection (`:sort`); sort paragraphs (`:sort-paragraphs`); hard-wrap the selection to the
-  configured width (`:reflow`); and reindent / dedent by a shiftwidth (`:indent-lines` / `:dedent-lines`).
+  configured width (`:reflow`); reindent / dedent by a shiftwidth (`:indent-lines` / `:dedent-lines`);
+  **Hash / Encode…** (SHA-1 / SHA-256 / SHA-512, Base64 and URL encode / decode); and **Format JSON…**
+  (errors reported with line and column).
 - **Extract menu** — regex extraction over the selection, bridged into the PTY: replace the selection
   with the http(s) URLs / email addresses / IPv4 addresses / numbers / double-quoted strings it contains,
   one per line (`:extract-urls` / `:extract-emails` / `:extract-ips` / `:extract-numbers` /
@@ -479,6 +501,23 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   (`paredit_splice_kill_forward` / `…_backward`, `paredit_insert_sexp_before` / `…_after`); and delete
   sexp / symbol forward and backward. The submap's generic vim reuses (visual select, undo/redo, mode
   switches, paste) are omitted — they already live on the Edit menu and are not structural ops.
+- **Transform menu** — case over the selection (lowercase / UPPERCASE) and identifier coercion
+  (UpperCamelCase / camelCase / under_score / UP_CASE / kebab-case / dot.case); justify left / center /
+  right / full / none; increment / decrement the number at point; and **Convert Number Base…**
+  (arbitrary-precision, prefix-aware).
+- **View menu** — **Command Center** (a tile quick-launch grid, `ZGui.tiles`), **Session Overview**
+  (counts of recent files, snippets and layout presets, each chip opening its manager), full screen,
+  translucent / opaque background.
+- **Workbench menu** — focus the editor's own tool windows (project tree, structure outline,
+  problems, run console, git changes, CI status, marks, registers, jumplist, recent files, TODO,
+  bookmarks), fold the middle drawer, maximize the bottom panel, hide the active tool window, jump
+  to the last one, and toggle zen mode.
+- **Narrow menu** — narrow to the selection / function / page, directly or as an indirect view, and
+  widen.
+- **Jump menu** — avy-style jump to a word or a typed character, the jumplist picker, last change,
+  file under cursor, unbalanced paren, line start / end, and a directory listing.
+- **Harpoon menu** — pin / unpin the current file, the pin menu, next / previous pin, jump to a slot,
+  and open pins 1–4 directly.
 - **Code menu** — language-server actions bridged into the PTY: go to definition / references /
   type definition, hover docs, peek definition, signature help, document / workspace symbol pickers
   (`SPC s j` / `SPC s S`), the refactor set — rename symbol, code action, organize imports, implement /
@@ -500,7 +539,8 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   blame, buffer-vs-HEAD diff, next/previous/reset hunk, stash / pop, and merge-conflict resolution
   (3-pane resolve, keep ours / theirs, next conflict).
 - **Window menu** — vim's `C-w` split-window family bridged into the PTY (each key backed by a real
-  editor command): split horizontally / vertically, focus the split to the left / down / up / right
+  editor command): split horizontally / vertically, save and re-apply named **Layout Presets**,
+  focus the split to the left / down / up / right
   (`C-w h/j/k/l`), move the current split to an edge (`C-w H/J/K/L`), rotate splits forward / reverse
   and exchange with the next (`C-w w/R/x`), grow / shrink height and width and equalize
   (`C-w +/-/>/<` / `C-w =`), maximize by closing the others (`C-w o`), close the split (`C-w q`), and
@@ -531,11 +571,23 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
 - **Snippets menu** — the PTY-native snippet library bridged into the PTY (distinct from the workbench
   Snippets panel): insert a snippet via the fuzzy picker (`:Snippets`) and open the library editor to
   create / edit / delete snippets (`:snippets`).
-- **Toolbar** (`ZGui.buttonBar`) — new / open / save / buffer nav / find / replace / go-to-def / format / git status / list marks / replay macro / toggle fold / comment lines / list tabs / split / full screen.
+- **Insert menu** — emoji & symbol, Nerd Font glyph and Unicode character pickers; date / time;
+  a table / box; a color literal (`ZGui.colorPicker`); UUID v4 / v1; lorem ipsum sentence / paragraph
+  / list; and passwords (simple / strong / paranoid / numeric PIN / phonetic).
+- **Mail menu** — compose, read mail (Rmail), send / send-and-exit / kill the draft, go to the `To:`
+  header or the body, insert the signature.
+- **Embedded menu** — Arduino CLI (compile, upload, serial monitor / plotter, new sketch, board and
+  port selection, board info, export the compiled binary, burn bootloader, debugger, core and library
+  managers, outdated check) and PlatformIO (build, upload, monitor, devices, clean, test, check,
+  packages, registry search, debugger).
+- **Help menu** — **Command Directory** (every menu command in a fuzzy, sortable table), a
+  **Keybinding Cheat Sheet** (commands with their accelerators), search help, and the tutor.
+- **Toolbar** (`ZGui.buttonBar`) — new / open / save / buffer nav / find / replace / go-to-def / format / git status / list marks / replay macro / toggle fold / comment lines / list tabs / Command Center / open recent / split / full screen.
 - **Command palette** (`⌘K`) — every menu action, fuzzy-searchable, and each one also callable from a
   script or a saved command chain (see [Scriptable](#scriptable-every-gui-action-is-a-bus-verb)).
-- **Cmd-shortcuts** — ⌘S save, ⇧⌘S Save As, ⌘O open, ⌘W close buffer, ⌘N new, ⌘Z/⇧⌘Z undo/redo,
-  ⌘F find, ⌘G/⇧⌘G next/prev, ⌘{ ⌘} buffer cycle, ⌃⌘F full screen.
+- **Cmd-shortcuts** — ⌘S save, ⇧⌘S Save As, ⌘O open, ⇧⌘W close buffer, ⌘N new, ⌘Z/⇧⌘Z undo/redo,
+  ⌘F find, ⌘G/⇧⌘G next/prev, ⌘{ ⌘} buffer cycle, ⌃⌘F full screen, ⌃⌘Q quit (native menu
+  accelerators); ⌘R run, ⌘D debug and ⇧⌘L light/dark toggle (the webview keymap's only chords).
 - **Tmux tiling** (`⌘K` ▸ Tmux) — the shared `ZGui.tmux` overlay, wired by `frontend/tmux-config.js`
   so each tile is a **separate editor**: its own xterm on its own backend PTY session
   (`term_session_*`), with the editor exec'd into it exactly as the fullscreen one is. `C-b` is the
@@ -548,7 +600,8 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
   (`zpwr-embed-terminal`'s `window.zpwrTermFit`), so full-screen programs — `vim`, `less`, `htop` —
   draw to the right width instead of to the geometry the pane happened to have at boot.
 - **Open / Save As / Help** dialogs (`ZGui.modal` + `ZGui.tree` file browser).
-- **Right-click context menu** in the editor (`ZGui.contextMenu`).
+- **Right-click** in the editor reaches zmax's own TUI context menu (xterm mouse forwarding); the
+  webview suppresses the browser menu over the pane and layers no `ZGui.contextMenu` on top of it.
 - **Drag-and-drop** files to open (`ZGui.fileDrag`).
 - **Full screen** + **translucent background** (window-vibrancy); **Preferences** panel.
 - **Open from the terminal / Finder / `mvim://` URL**, forwarded into the running window
@@ -556,10 +609,11 @@ the **Tabs** menu manages tabpages (each holds its own split layout).
 
 Out of scope (no surface in a PTY/WebView host — they need a native text view): native font rendering
 (ligatures, thin strokes, antialias), Touch Bar, macOS Services, Force Click / dictionary lookup,
-trackpad gesture pseudo-keys, find-pasteboard sharing. A passive always-on **tabline** strip is
-omitted on purpose — a faithful one needs editor↔GUI introspection the raw PTY doesn't expose, and a
-drifting strip would lie about state; the Tabs menu + the on-demand `:tabs` picker (rendered by the
-editor itself) cover switching without that risk.
+trackpad gesture pseudo-keys, find-pasteboard sharing. The buffer bar
+above the editor is the reconstructed bufferline (see
+[Editor state](#editor-state-reconstructed-from-the-pty-stream)): it shows only when the editor's
+bufferline is on, rather than a strip guessed from the GUI's own writes. Vim tabpages have no such
+strip; the Tabs menu and the on-demand `:tabs` picker (rendered by the editor itself) cover them.
 
 ## Scriptable: every GUI action is a bus verb
 
@@ -605,8 +659,9 @@ the terminal. zmax-gui's own vocabulary raises none of them — every published 
 
 `frontend/wiring.test.cjs` is the other half of that: the vocabulary test proves the rows exist, this
 one drives the real `main.js` / `panels.js` against a stubbed Tauri host and asserts what they send
-to Rust — the floating shell's PTY geometry (at spawn and on every later resize) and the documents
-search with its formats filter.
+to Rust — the floating shell's PTY geometry (at spawn and on every later resize), the documents
+search with its formats filter, the Git Commit panel (message, amend pre-fill, empty-message refusal)
+and Keep / Flush Lines (preview, mode flip, apply only on Apply).
 
 ### Reversible verbs: a refactor is a transaction
 
@@ -777,8 +832,8 @@ gitignored build artifacts.
 ## Build
 
 ```sh
-git submodule update --init --recursive   # zgui-core, zpwr-clip-engine, zpwr-embed-terminal, zpwr-file-browser, zpwr-i18n, zmax
-pnpm install
+git submodule update --init --recursive   # every crates/* submodule + frontend/lib/zpwr-clip-engine (.gitmodules)
+pnpm install        # also fetches the pinned zgui-core webui (git dependency)
 pnpm dev            # or: pnpm build
 ```
 
@@ -816,7 +871,7 @@ locale is loaded, so a shipped translation always wins and the seed only fills w
 answers. Registering it the obvious way, as an `__i18nExtraBases` entry, merges the other way round
 and would override real translations with English — which nothing on an English screen would reveal.
 
-It is English-only on purpose. Generating 26 more locales from an English string is not translation,
+It is English-only on purpose. Generating the other locales from an English string is not translation,
 and a fabricated catalog is worse than a missing one: the runtime reads any present value as a
 successful lookup, so machine-filled French would render as French with nothing to distinguish it
 from the real thing. `i18n:seed:check` fails if a second file appears in that directory, if the seed

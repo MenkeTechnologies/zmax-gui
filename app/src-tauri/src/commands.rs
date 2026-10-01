@@ -1,9 +1,9 @@
 //! Generated list of host command names — the zmax-gui bus surface
 //! (`App::open("zmax-gui")->verbs()`).
 //!
-//! zmax-gui has no `-core` engine crate: `zmax-gui-core` ships only the webui (menu.js + css),
-//! and the editor itself is the `zmax` binary running in the embedded terminal. The host's
-//! engine-equivalent is its own `#[tauri::command]` surface — project search, binary-document
+//! zmax-gui has no `-core` engine crate: `zmax-gui-core` ships only the webui (menu.js,
+//! editor-state.js, editor-hud.js + css), and the editor itself is the `zmax` binary running in
+//! the embedded terminal. The host's engine-equivalent is its own `#[tauri::command]` surface — project search, binary-document
 //! search/replace (`doc_search`), blame, git, text/editor tools, the file browser and the terminal —
 //! registered in `lib.rs`'s `tauri::generate_handler![…]`.
 //!
