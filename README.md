@@ -53,6 +53,8 @@ zmax-gui/
 │   ├─ edit_ops.rs       align columns on a delimiter + language-aware comment toggle
 │   ├─ encoding_ops.rs   detect + transcode a file's character encoding (UTF-8/16, Latin-1)
 │   ├─ git_more.rs       repo-wide log, show-commit, diff two revisions, commit graph
+│   ├─ git_ops.rs        git commit (amend / sign-off) + tags (list / create / delete / show)
+│   ├─ line_filter.rs    keep / flush lines + delete duplicate lines over one file
 │   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
 │   ├─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
 │   ├─ bus.rs            GUI Automation Bus socket: host commands + webview appshell.* verbs
@@ -100,7 +102,8 @@ On top of the MacVim menu surface, the app adds an IDE-style **project workbench
 from the **⌘K command palette** (and dedicated shortcuts). Every result is opened by driving the
 editor (`:open <path>:<line>:<col>`); the OS-side work (walking the tree, grepping, filesystem
 mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.rs` / `git_ext.rs` /
-`text_tools.rs` / `edit_ops.rs` / `encoding_ops.rs` / `git_more.rs` / `workbench_ext.rs` commands, so
+`text_tools.rs` / `edit_ops.rs` / `encoding_ops.rs` / `git_more.rs` / `git_ops.rs` / `line_filter.rs` /
+`workbench_ext.rs` commands, so
 results are fast and the editor stays the single source of truth.
 
 - **Quick Open** (`⌘P`) — fuzzy file finder over the project tree (VCS/build dirs pruned), boundary-
@@ -153,6 +156,17 @@ results are fast and the editor stays the single source of truth.
 - **Sort Lines** — reorder a file's lines on disk: **reverse**, **ignore-case**, **numeric** and
   **unique** (a sorted `uniq`) toggles, with a dry-run preview of the line-count delta; the file is
   reloaded in the editor after apply.
+- **Keep / Flush Lines** — Emacs `keep-lines` / `flush-lines` over a file on disk: delete every line
+  that does **not** match a pattern, or every line that **does** (literal or **regex**, optional
+  ignore-case). The preview lists each line that would go by its line number — click one to open the
+  file there — before **Apply** rewrites the file. An empty pattern is refused rather than read as
+  "match everything".
+- **Delete Duplicate Lines** — Emacs `delete-duplicate-lines`: drop repeated lines **without
+  sorting**, keeping the **first** occurrence or the **last**; **adjacent only** collapses runs of
+  identical neighbours (a `uniq` without the sort), **ignore case** / **ignore surrounding
+  whitespace** loosen the comparison, and **keep blank lines** leaves paragraph spacing alone. Same
+  removed-lines preview as Keep / Flush. Both preserve the file's line ending and final-newline
+  state.
 - **File Cleanup** — normalise a file: convert line endings (**LF**/**CRLF**), **trim trailing
   whitespace**, **expand tabs → spaces** or **tabify** leading indent, and **ensure a final
   newline**; a preview reports the changed-line count and byte delta before apply. Binary/oversized
@@ -170,7 +184,7 @@ results are fast and the editor stays the single source of truth.
   bracketed paste (multi-line bodies land verbatim, no auto-indent), add / remove / **Clear**.
 - **Git Changes** — the current branch + `git status` list; click a file for its unified **diff**;
   **Stage** / **Unstage** / **Discard** (confirmed) each file inline, **Refresh**, jump to **Blame**,
-  or open it in the editor.
+  or open it in the editor. **Commit…** opens Git Commit on the staged result.
 - **Git Blame** (`⇧⌘B`) — per-line commit / author / date for a chosen file (`git blame`
   `--line-porcelain`); click a line to jump there.
 - **Document Blame** (`⇧⌘Y`) — the same question for a binary document, answered at the document's
@@ -191,6 +205,16 @@ results are fast and the editor stays the single source of truth.
 - **Git Stash** — the stash list; click an entry for its **patch** (`stash show -p`), **Pop**
   (apply + drop, confirmed) or **Drop** (confirmed) per entry, and **Stash Changes** to save the
   working tree (including untracked) with an optional message.
+- **Git Commit** — commit the staged index: the panel lists exactly the paths the commit will record
+  (`git diff --cached --name-status`), takes a multi-line message, and offers **Amend** (rewrite the
+  tip — toggling it on an empty message pre-fills the tip's message; an amend with no message keeps
+  it; confirmed) and **Sign-off** (`Signed-off-by` trailer). A commit with nothing staged is refused
+  with that reason. A successful commit fires the `git.committed` stryke hook and the
+  `zmax.git.committed` bus event.
+- **Git Tags** — every tag, newest first, annotated and lightweight alike, with the commit it
+  resolves to; click one to **show** it (`git show refs/tags/<name>`), **✕** to delete (confirmed),
+  **New Tag** to create one — annotated when given a message, lightweight when not, at `HEAD` or any
+  revision. Names and revisions are flag-guarded.
 - **Project Stats** — a read-only report of file / line / byte counts across the tree, broken down by
   extension (binary and oversized files skipped for line counting).
 - **Batch Plan** — the shared arrangement grid over the project: paint which of the reversible
@@ -601,9 +625,9 @@ that: reads and previews as `pure`, and every file mutation as `inverse` with a 
 | Class | Verbs | Compensation |
 | --- | --- | --- |
 | `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted,coverage,record}`, and every `*.preview` dry run | none needed — nothing is written |
-| `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
-| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
-| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
+| `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.lines.{filterApply,dedupeApply}`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
+| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.git.tagCreate` (undone by deleting that tag), `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
+| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop,commit,tagDelete}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
 
 A mutating verb learns the exact paths it is about to touch **from its own dry run**, snapshots
 those, then applies. So `zmax.replace.apply` snapshots the files its preview named — source files and

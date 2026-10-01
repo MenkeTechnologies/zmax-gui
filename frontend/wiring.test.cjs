@@ -319,3 +319,123 @@ test("documents search: the format toggles narrow the pass and re-run it", async
   assert.deepEqual(calls[calls.length - 1].args.opts.formats, ["xlsx", "pdf"],
     "the chosen formats are the filter doc_search.rs walks with");
 });
+
+// ── git commit + line filters ───────────────────────────────────────────────────────────────────
+
+// The stub modal drops its options; these panels act through their action buttons, so record them.
+function recordModals(env) {
+  const opened = [];
+  env.win.ZGui.modal.open = (o) => { opened.push(o); return { body: o.body, close() {} }; };
+  env.win.ZGui.modal.confirm = () => Promise.resolve(true);
+  return opened;
+}
+function action(modal, label) {
+  const a = modal.actions.find((x) => x.label === label);
+  assert.ok(a, `no "${label}" action on "${modal.title}"`);
+  return a;
+}
+const runCommand = (env, id) => {
+  const item = env.commands().find((c) => c.id === id);
+  assert.ok(item, `${id} is not in the published vocabulary`);
+  item.run();
+};
+
+test("git commit: the panel commits its message, and amend starts from the tip's message", async () => {
+  const fired = [];
+  const env = await bootPanels({
+    git_commit_info: { branch: "main", has_head: true, staged: [{ status: "M", path: "src/a.rs" }], last_message: "previous subject" },
+    git_commit: { hash: "abcdef0123", short: "abcdef01", subject: "add parser" },
+  });
+  env.win.ZGui.hooks = { fire: (id, ctx) => { fired.push([id, ctx]); return Promise.resolve(); } };
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.gitCommit");
+  await tick(); await tick();
+
+  const modal = opened[opened.length - 1];
+  assert.equal(modal.title, "Git Commit");
+  const staged = env.of("zp-row").find((r) => r.children.some((c) => c.textContent === "src/a.rs"));
+  assert.ok(staged, "the staged path is not listed");
+  const msg = env.created.find((n) => n.tag === "textarea");
+  assert.ok(msg, "no message box");
+
+  msg.value = "add parser";
+  action(modal, "Commit").onClick();
+  await tick();
+  assert.deepEqual(env.sent("git_commit").map((c) => c.args),
+    [{ root: "/proj", message: "add parser", amend: false, signOff: false }]);
+  assert.deepEqual(fired, [["git.committed", { root: "/proj", hash: "abcdef0123", subject: "add parser" }]],
+    "the declared git.committed hook must fire after a commit from the panel");
+
+  // Amend on an empty box pre-fills the tip's message, then commits as an amend.
+  msg.value = "";
+  env.of("zp-opt").find((b) => b.textContent === "Amend").fire("click");
+  assert.equal(msg.value, "previous subject");
+  action(modal, "Commit").onClick();
+  await tick(); await tick();
+  const last = env.sent("git_commit").pop();
+  assert.equal(last.args.amend, true);
+  assert.equal(last.args.message, "previous subject");
+});
+
+test("git commit: an empty message is refused before it reaches git", async () => {
+  const env = await bootPanels({
+    git_commit_info: { branch: "main", has_head: false, staged: [{ status: "A", path: "a" }], last_message: "" },
+  });
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.gitCommit");
+  await tick(); await tick();
+  const shown = env.of("zp-opts").pop().children;
+  assert.ok(!shown.some((b) => b.textContent === "Amend"), "an unborn branch has nothing to amend");
+  assert.ok(shown.some((b) => b.textContent === "Sign-off"));
+  action(opened[opened.length - 1], "Commit").onClick();
+  await tick();
+  assert.equal(env.sent("git_commit").length, 0);
+});
+
+test("keep / flush lines: previews the picked file, flips mode, and applies only on Apply", async () => {
+  const env = await bootPanels({
+    find_files: [{ path: "/proj/notes.txt", rel: "notes.txt" }],
+    filter_file_lines: (a) => ({
+      lines_before: 4, lines_after: 3, removed: 1, differs: true, applied: !!a.opts.apply,
+      sample: [{ line: 3, text: "TODO drop me" }], sample_truncated: false,
+    }),
+  });
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.filterLines");
+  await tick();
+  const picker = env.of("zp-input")[0];
+  picker.value = "notes";
+  picker.fire("input");
+  env.flush(); await tick();
+  env.of("zp-row")[0].fire("click");             // pick the file
+
+  const pat = env.of("zp-input")[1];
+  assert.ok(pat, "the pattern box was not built");
+  pat.value = "TODO";
+  pat.fire("input");
+  env.flush(); await tick();
+  let calls = env.sent("filter_file_lines");
+  assert.deepEqual(calls[0].args, {
+    path: "/proj/notes.txt",
+    opts: { pattern: "TODO", keep: true, regex: false, case_insensitive: false, apply: false },
+  });
+  // The removed line is listed by its line number.
+  assert.ok(env.of("zp-row").some((r) => r.children.some((c) => c.textContent === "3")), "removed-line row missing");
+
+  const keep = env.of("zp-opt").find((b) => b.textContent === "Keep matching");
+  const flush = env.of("zp-opt").find((b) => b.textContent === "Flush matching");
+  flush.fire("click");
+  env.flush(); await tick();
+  calls = env.sent("filter_file_lines");
+  assert.equal(calls[calls.length - 1].args.opts.keep, false);
+  assert.ok(!keep.classList.contains("active") && flush.classList.contains("active"), "keep and flush must be exclusive");
+  flush.fire("click");                           // clicking the active mode keeps it on
+  assert.ok(flush.classList.contains("active"));
+  assert.ok(calls.every((c) => c.args.opts.apply === false), "a preview applied");
+
+  action(opened[opened.length - 1], "Apply").onClick();
+  await tick();
+  const applied = env.sent("filter_file_lines").pop();
+  assert.equal(applied.args.opts.apply, true);
+  assert.equal(applied.args.opts.keep, false);
+});

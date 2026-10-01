@@ -237,3 +237,54 @@ test("state queries answer from the backend, and the root is resolved once", asy
   assert.equal(await env.A.get("zmax.root"), "/proj");
   assert.equal(env.of("list_dir").length, 1, "the project root must be cached, not re-walked per verb");
 });
+
+test("line filters: previews never apply, applies snapshot exactly the one file and arm an undo", async () => {
+  const seen = [];
+  const env = boot({
+    filter_file_lines: (a) => { seen.push(["filter", a.opts.apply]); return { applied: a.opts.apply, differs: true, removed: 2 }; },
+    dedupe_file_lines: (a) => { seen.push(["dedupe", a.opts.apply]); return { applied: a.opts.apply, differs: true, removed: 1 }; },
+  });
+  const s = env.A.surface();
+  for (const id of ["zmax.lines.filterPreview", "zmax.lines.dedupePreview"]) assert.equal(verbById(s, id).rev, "pure", id);
+  for (const id of ["zmax.lines.filterApply", "zmax.lines.dedupeApply"]) assert.equal(verbById(s, id).rev, "inverse", id);
+
+  await env.A.call("zmax.lines.filterPreview", { path: "/proj/a.txt", opts: { pattern: "x", keep: false, apply: true } });
+  await env.A.call("zmax.lines.dedupePreview", { path: "/proj/a.txt", opts: { apply: true } });
+  assert.equal(env.of("txn_snapshot").length, 0, "a preview must not take a snapshot");
+
+  const f = await env.A.call("zmax.lines.filterApply", { path: "/proj/a.txt", opts: { pattern: "x", keep: false } });
+  const d = await env.A.call("zmax.lines.dedupeApply", { path: "/proj/b.txt" });
+  assert.deepEqual(seen, [["filter", false], ["dedupe", false], ["filter", true], ["dedupe", true]]);
+  assert.equal(env.of("filter_file_lines")[1].args.opts.pattern, "x", "the caller's pattern must survive");
+  assert.deepEqual(env.of("txn_snapshot").map((c) => c.args.paths), [["/proj/a.txt"], ["/proj/b.txt"]]);
+  assert.ok(f.txn && d.txn, "an applied filter must carry its compensation token");
+});
+
+test("a tag created over the bus is undone by deleting that tag in the same repository", async () => {
+  const env = boot({ git_tag_create: () => null, git_tag_delete: () => null });
+  const surface = env.A.surface();
+  assert.equal(verbById(surface, "zmax.git.tagCreate").rev, "inverse");
+  assert.equal(verbById(surface, "zmax.git.tagDelete").rev, "irreversible",
+    "deleting an annotated tag loses its message — it must not claim an undo");
+
+  const res = await env.A.call("zmax.git.tagCreate", { name: "v1.0", message: "rel" });
+  assert.deepEqual(env.of("git_tag_create")[0].args, { root: "/proj", name: "v1.0", message: "rel", rev: null });
+  await env.A.undo("zmax.git.tagCreate", { name: "v1.0" }, res);
+  assert.deepEqual(env.of("git_tag_delete").map((c) => c.args), [{ root: "/proj", name: "v1.0" }]);
+});
+
+test("a commit is irreversible, refused inside a transaction, and announced when it lands", async () => {
+  const env = boot({ git_commit: () => ({ hash: "abc123", short: "abc123", subject: "fix" }) });
+  assert.equal(verbById(env.A.surface(), "zmax.git.commit").rev, "irreversible");
+
+  const events = [];
+  env.A.on("zmax.git.committed", (p) => events.push(p));
+  const r = await env.A.call("zmax.git.commit", { message: "fix", amend: true });
+  assert.equal(r.hash, "abc123");
+  assert.deepEqual(env.of("git_commit")[0].args, { root: "/proj", message: "fix", amend: true, signOff: false });
+  assert.deepEqual(events, [{ root: "/proj", hash: "abc123", subject: "fix" }]);
+
+  env.A.txnBegin();
+  await assert.rejects(() => env.A.call("zmax.git.commit", { message: "again" }), /not reversible/);
+  assert.equal(env.of("git_commit").length, 1, "the refused commit must not have run");
+});

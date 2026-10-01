@@ -189,3 +189,7 @@
   background: rgba(0, 0, 0, .25); }
 .zp-plan-recover-label { font-family: monospace; font-size: 11px; color: var(--text, #c8d6e5);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Git Commit: the staged list is a preview, the message box is the work area. */
+.zp-commit-list { max-height: 28vh; }
+.zp-commit-msg { min-height: 110px; resize: vertical; font-family: monospace; font-size: 12px; line-height: 1.4; }

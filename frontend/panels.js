@@ -701,6 +701,7 @@
         body: body,
         className: "zp-modal zp-git-modal",
         actions: [
+          { label: T("zmax.panel.commit_ellipsis", "Commit…"), close: false, onClick: function () { gitCommit(reload); } },
           { label: T("zmax.panel.refresh", "Refresh"), close: false, onClick: reload },
           { label: T("zmax.dialog.close", "Close"), close: true },
         ],
@@ -1424,6 +1425,176 @@
     });
   }
 
+  // ── git commit (staged index → commit; amend / sign-off) ──────────────────────────────────────────
+  // The panel shows exactly what the commit will record (the staged paths, git_commit_info) so the
+  // message is written against the real index rather than against what the user remembers staging.
+  // Toggling Amend on an empty message pre-fills the tip's message, the way `git commit --amend`
+  // opens the editor on it; committing an amend with an empty message keeps the tip's message.
+  // A commit made here is announced on both channels this app declares for it: the `git.committed`
+  // stryke hook (index.html ZMAX_HOOKS) and the `zmax.git.committed` bus event (verbs.js).
+  function announceCommit(root, r) {
+    var Z = window.ZGui || {};
+    var ctx = { root: root, hash: r.hash, subject: r.subject };
+    if (Z.hooks && typeof Z.hooks.fire === "function") { try { Z.hooks.fire("git.committed", ctx).catch(function () {}); } catch (e) {} }
+    if (Z.automation && typeof Z.automation.emit === "function") { try { Z.automation.emit("zmax.git.committed", ctx); } catch (e) {} }
+  }
+  function gitCommit(onDone) {
+    getRoot().then(function (root) {
+      invoke("git_commit_info", { root: root }).then(function (info) {
+        var body = document.createElement("div");
+        body.className = "zp-git";
+        var head = document.createElement("div");
+        head.className = "zp-git-head";
+        head.textContent = "⌥ " + info.branch + " · " + info.staged.length + " " + T("zmax.panel.commit_staged_n", "staged");
+        body.appendChild(head);
+
+        var list = document.createElement("div");
+        list.className = "zp-list zp-commit-list";
+        if (!info.staged.length) {
+          var none = document.createElement("div");
+          none.className = "zp-count";
+          none.textContent = T("zmax.panel.commit_nothing", "Nothing staged — stage files in Git Changes first (or amend)");
+          list.appendChild(none);
+        }
+        info.staged.forEach(function (s) {
+          var row = document.createElement("div");
+          row.className = "zp-row";
+          var badge = document.createElement("span");
+          badge.className = "zp-badge zp-git-" + s.status;
+          badge.textContent = s.status;
+          var name = document.createElement("span");
+          name.className = "zp-row-primary";
+          name.textContent = s.path;
+          row.appendChild(badge);
+          row.appendChild(name);
+          list.appendChild(row);
+        });
+        body.appendChild(list);
+
+        var msg = document.createElement("textarea");
+        msg.className = "zp-input zp-commit-msg";
+        msg.placeholder = T("zmax.panel.commit_msg_ph", "Commit message (first line is the subject)…");
+        msg.spellcheck = true;
+        body.appendChild(msg);
+
+        var controls = document.createElement("div");
+        controls.className = "zp-opts";
+        var amend = optToggle(T("zmax.panel.commit_amend", "Amend"), T("zmax.panel.commit_amend_tip", "Rewrite the last commit instead of adding one"));
+        var signoff = optToggle(T("zmax.panel.commit_signoff", "Sign-off"), T("zmax.panel.commit_signoff_tip", "Add a Signed-off-by trailer"));
+        if (info.has_head) controls.appendChild(amend.el);
+        controls.appendChild(signoff.el);
+        body.appendChild(controls);
+        amend.onChange = function () { if (amend.on && !msg.value.trim()) msg.value = info.last_message; };
+
+        function commit() {
+          if (!amend.on && !msg.value.trim()) { toast(T("zmax.panel.commit_need_msg", "Enter a commit message"), "error"); return; }
+          var go = function () {
+            invoke("git_commit", { root: root, message: msg.value, amend: amend.on, signOff: signoff.on }).then(function (r) {
+              announceCommit(root, r);
+              toast((amend.on ? T("zmax.panel.commit_amended", "Amended") : T("zmax.panel.committed", "Committed")) + " " + r.short + " · " + r.subject);
+              dlg.close();
+              if (typeof onDone === "function") onDone();
+            }, function (err) { toast(String(err), "error"); });
+          };
+          if (!amend.on) { go(); return; }
+          ZGui.modal.confirm({ title: T("zmax.panel.commit_amend", "Amend"), message: T("zmax.panel.commit_amend_msg", "Rewrite the last commit on this branch?") }).then(function (ok) { if (ok) go(); });
+        }
+
+        var dlg = ZGui.modal.open({
+          title: T("zmax.panel.git_commit", "Git Commit"),
+          body: body,
+          className: "zp-modal zp-git-modal",
+          actions: [
+            { label: T("zmax.panel.commit", "Commit"), primary: true, close: false, onClick: commit },
+            { label: T("zmax.dialog.close", "Close"), close: true },
+          ],
+        });
+        setTimeout(function () { msg.focus(); }, 30);
+      }, function (err) { toast(T("zmax.panel.not_git", "Not a git repository") + (err ? ": " + err : ""), "error"); });
+    });
+  }
+
+  // ── git tags (list / show / create at HEAD or a revision / delete) ────────────────────────────────
+  function gitTags() {
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+      var showPre = document.createElement("pre");
+      showPre.className = "zp-diff";
+      body.appendChild(showPre);
+
+      function reload() {
+        invoke("git_tags", { root: root }).then(render, function (err) { toast(T("zmax.panel.not_git", "Not a git repository") + (err ? ": " + err : ""), "error"); });
+      }
+      function render(tags) {
+        list.textContent = "";
+        showPre.textContent = "";
+        if (!tags || !tags.length) {
+          var none = document.createElement("div");
+          none.className = "zp-count";
+          none.textContent = T("zmax.panel.no_tags", "No tags");
+          list.appendChild(none);
+          return;
+        }
+        tags.forEach(function (t) {
+          var row = document.createElement("div");
+          row.className = "zp-row";
+          var badge = document.createElement("span");
+          badge.className = "zp-badge";
+          badge.textContent = t.target;
+          var name = document.createElement("span");
+          name.className = "zp-row-primary";
+          name.textContent = t.name + (t.annotated ? "" : "  · " + T("zmax.panel.tag_lightweight", "lightweight"));
+          var sec = document.createElement("span");
+          sec.className = "zp-row-secondary";
+          sec.textContent = t.subject + " · " + t.date;
+          row.appendChild(badge);
+          row.appendChild(name);
+          row.appendChild(sec);
+          row.addEventListener("click", function () {
+            invoke("git_tag_show", { root: root, name: t.name }).then(function (d) { showPre.textContent = d || T("zmax.panel.no_diff", "(no diff)"); }, function (err) { showPre.textContent = String(err); });
+          });
+          row.appendChild(gitActBtn("✕", T("zmax.panel.tag_delete", "Delete tag"), "zp-danger", function () {
+            ZGui.modal.confirm({ title: T("zmax.panel.tag_delete", "Delete tag"), message: T("zmax.panel.tag_delete_msg", "Delete this tag? An annotated tag's message is lost with it.") + "\n" + t.name }).then(function (ok) {
+              if (!ok) return;
+              invoke("git_tag_delete", { root: root, name: t.name }).then(function () { toast(T("zmax.panel.tag_deleted", "Tag deleted") + ": " + t.name); reload(); }, function (err) { toast(String(err), "error"); });
+            });
+          }));
+          list.appendChild(row);
+        });
+      }
+
+      // Name → message (blank = lightweight) → revision (blank = HEAD); each prompt cancels the flow.
+      function newTag() {
+        ZGui.modal.prompt({ title: T("zmax.panel.tag_new", "New Tag"), message: T("zmax.panel.tag_name", "Tag name:"), placeholder: "v1.0.0" }).then(function (name) {
+          if (!name) return;
+          ZGui.modal.prompt({ title: T("zmax.panel.tag_new", "New Tag"), message: T("zmax.panel.tag_message", "Message (blank = lightweight tag):"), placeholder: "" }).then(function (message) {
+            if (message == null) return;
+            ZGui.modal.prompt({ title: T("zmax.panel.tag_new", "New Tag"), message: T("zmax.panel.tag_rev", "Revision (blank = HEAD):"), placeholder: "HEAD" }).then(function (rev) {
+              if (rev == null) return;
+              invoke("git_tag_create", { root: root, name: name.trim(), message: message, rev: rev.trim() || null }).then(function () { toast(T("zmax.panel.tag_created", "Tag created") + ": " + name.trim()); reload(); }, function (err) { toast(String(err), "error"); });
+            }).catch(function () {});
+          }).catch(function () {});
+        }).catch(function () {});
+      }
+
+      ZGui.modal.open({
+        title: T("zmax.panel.tags", "Git Tags"),
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [
+          { label: "＋ " + T("zmax.panel.tag_new", "New Tag"), close: false, onClick: newTag },
+          { label: T("zmax.panel.refresh", "Refresh"), close: false, onClick: reload },
+          { label: T("zmax.dialog.close", "Close"), close: true },
+        ],
+      });
+      reload();
+    });
+  }
+
   // ── find definition (jump to where an exact symbol is declared) ───────────────────────────────────
   function findDefinition() {
     getRoot().then(function (root) {
@@ -1487,6 +1658,128 @@
           { label: T("zmax.dialog.close", "Close"), close: true },
         ],
       });
+      preview();
+    });
+  }
+
+  // ── line filters: keep / flush lines + delete duplicate lines (line_filter.rs) ────────────────────
+  // Both previews list the lines that would go, by their current line number; clicking one opens
+  // the file there, so a too-broad pattern is visible before Apply rather than after.
+  function removedLinesPreview(path, list, count, r) {
+    count.textContent = r.lines_before + " " + T("zmax.panel.lines", "lines")
+      + (r.removed ? " → " + r.lines_after + " · " + r.removed + " " + T("zmax.panel.lines_removed", "to remove") : "")
+      + " · " + (r.differs ? T("zmax.panel.will_change", "will change") : T("zmax.panel.no_change", "no change"))
+      + (r.sample_truncated ? " · " + T("zmax.panel.preview_capped", "preview capped") : "");
+    list.textContent = "";
+    (r.sample || []).forEach(function (ln) {
+      var row = document.createElement("div");
+      row.className = "zp-row";
+      var badge = document.createElement("span");
+      badge.className = "zp-badge";
+      badge.textContent = String(ln.line);
+      var text = document.createElement("span");
+      text.className = "zp-row-primary zp-rep-before";
+      text.textContent = ln.text;
+      row.appendChild(badge);
+      row.appendChild(text);
+      row.addEventListener("click", function () { openInEditor(path, ln.line); });
+      list.appendChild(row);
+    });
+  }
+  function lineEditModal(path, title, body, cmd, opts) {
+    var dlg = ZGui.modal.open({
+      title: title,
+      body: body,
+      className: "zp-modal",
+      actions: [
+        { label: T("zmax.panel.apply", "Apply"), close: false, onClick: function () {
+          var o = opts(true);
+          if (!o) return;
+          invoke(cmd, { path: path, opts: o }).then(function (r) {
+            toast(r.applied ? r.removed + " " + T("zmax.panel.lines_removed_done", "lines removed") : T("zmax.panel.no_change", "no change"));
+            if (r.applied) openInEditor(path);
+            dlg.close();
+          }, function (err) { toast(String(err), "error"); });
+        } },
+        { label: T("zmax.dialog.close", "Close"), close: true },
+      ],
+    });
+    return dlg;
+  }
+
+  function filterLines() {
+    pickFileThen(T("zmax.panel.filter_lines_file", "Keep / Flush Lines: pick a file"), function (path, rel) {
+      var body = document.createElement("div");
+      body.className = "zp-picker";
+      var pat = document.createElement("input");
+      pat.type = "text"; pat.className = "zp-input"; pat.placeholder = T("zmax.panel.filter_lines_ph", "Pattern (literal, or regex with .*)…");
+      pat.autocomplete = "off"; pat.autocapitalize = "off"; pat.spellcheck = false; pat.setAttribute("autocorrect", "off");
+      body.appendChild(pat);
+      var controls = document.createElement("div");
+      controls.className = "zp-opts";
+      var keep = optToggle(T("zmax.panel.keep_lines", "Keep matching"), T("zmax.panel.keep_lines_tip", "Delete every line that does NOT match (keep-lines)"));
+      var flush = optToggle(T("zmax.panel.flush_lines", "Flush matching"), T("zmax.panel.flush_lines_tip", "Delete every line that matches (flush-lines)"));
+      var rx = optToggle(".*", T("zmax.panel.regex", "Regex"));
+      var ci = optToggle("Aa", T("zmax.panel.case_insensitive", "Ignore case"));
+      keep.on = true; keep.el.classList.add("active");
+      [keep, flush, rx, ci].forEach(function (o) { controls.appendChild(o.el); });
+      body.appendChild(controls);
+      var count = document.createElement("div");
+      count.className = "zp-count";
+      body.appendChild(count);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+
+      function opts(apply) {
+        if (!pat.value) { if (apply) toast(T("zmax.panel.filter_need_pat", "Enter a pattern")); return null; }
+        return { pattern: pat.value, keep: keep.on, regex: rx.on, case_insensitive: ci.on, apply: apply };
+      }
+      var preview = debounce(function () {
+        var o = opts(false);
+        if (!o) { count.textContent = ""; list.textContent = ""; return; }
+        invoke("filter_file_lines", { path: path, opts: o }).then(function (r) { removedLinesPreview(path, list, count, r); }, function (err) { count.textContent = String(err); list.textContent = ""; });
+      }, 200);
+      // Keep and flush are one choice shown as two buttons: exactly one is on.
+      keep.onChange = function () { keep.on = true; keep.el.classList.add("active"); flush.on = false; flush.el.classList.remove("active"); preview(); };
+      flush.onChange = function () { flush.on = true; flush.el.classList.add("active"); keep.on = false; keep.el.classList.remove("active"); preview(); };
+      rx.onChange = ci.onChange = preview;
+      pat.addEventListener("input", preview);
+
+      lineEditModal(path, T("zmax.panel.filter_lines", "Keep / Flush Lines") + " · " + rel, body, "filter_file_lines", opts);
+      setTimeout(function () { pat.focus(); }, 30);
+    });
+  }
+
+  function dedupeLines() {
+    pickFileThen(T("zmax.panel.dedupe_file", "Delete Duplicate Lines: pick a file"), function (path, rel) {
+      var body = document.createElement("div");
+      body.className = "zp-picker";
+      var controls = document.createElement("div");
+      controls.className = "zp-opts";
+      var last = optToggle(T("zmax.panel.dedupe_last", "Keep last"), T("zmax.panel.dedupe_last_tip", "Keep the last occurrence instead of the first"));
+      var adj = optToggle(T("zmax.panel.dedupe_adjacent", "Adjacent only"), T("zmax.panel.dedupe_adjacent_tip", "Only collapse runs of identical neighbouring lines"));
+      var ci = optToggle("Aa", T("zmax.panel.case_insensitive", "Ignore case"));
+      var trim = optToggle("␣", T("zmax.panel.dedupe_trim", "Ignore leading/trailing whitespace"));
+      var blanks = optToggle("¶", T("zmax.panel.dedupe_blanks", "Keep blank lines"));
+      [last, adj, ci, trim, blanks].forEach(function (o) { controls.appendChild(o.el); });
+      body.appendChild(controls);
+      var count = document.createElement("div");
+      count.className = "zp-count";
+      body.appendChild(count);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+
+      function opts(apply) {
+        return { keep_last: last.on, adjacent_only: adj.on, case_insensitive: ci.on, trim: trim.on, keep_blanks: blanks.on, apply: apply };
+      }
+      function preview() {
+        invoke("dedupe_file_lines", { path: path, opts: opts(false) }).then(function (r) { removedLinesPreview(path, list, count, r); }, function (err) { count.textContent = String(err); list.textContent = ""; });
+      }
+      last.onChange = adj.onChange = ci.onChange = trim.onChange = blanks.onChange = preview;
+
+      lineEditModal(path, T("zmax.panel.dedupe_lines", "Delete Duplicate Lines") + " · " + rel, body, "dedupe_file_lines", opts);
       preview();
     });
   }
@@ -1975,6 +2268,8 @@
       { id: "zmax.panel.projectStats", label: P + T("zmax.panel.project_stats", "Project Stats"), run: projectStats },
       { id: "zmax.panel.compareFiles", label: P + T("zmax.panel.compare_files", "Compare Files"), run: compareFiles },
       { id: "zmax.panel.sortLines", label: P + T("zmax.panel.sort_lines", "Sort Lines"), run: sortLines },
+      { id: "zmax.panel.filterLines", label: P + T("zmax.panel.filter_lines", "Keep / Flush Lines"), run: filterLines },
+      { id: "zmax.panel.dedupeLines", label: P + T("zmax.panel.dedupe_lines", "Delete Duplicate Lines"), run: dedupeLines },
       { id: "zmax.panel.fileCleanup", label: P + T("zmax.panel.cleanup", "File Cleanup"), run: fileCleanup },
       { id: "zmax.panel.batchRename", label: P + T("zmax.panel.batch_rename", "Batch Rename"), run: batchRename },
       { id: "zmax.panel.alignColumns", label: P + T("zmax.panel.align_columns", "Align Columns"), run: alignColumns },
@@ -1994,6 +2289,7 @@
         run: function () { if (window.ZmaxPlan && typeof ZmaxPlan.openRecovery === "function") ZmaxPlan.openRecovery(); },
       },
       { id: "zmax.panel.gitChanges", label: G + T("zmax.panel.git_changes", "Git Changes"), run: gitPanel },
+      { id: "zmax.panel.gitCommit", label: G + T("zmax.panel.git_commit", "Git Commit"), run: function () { gitCommit(); } },
       { id: "zmax.panel.gitBlame", label: G + T("zmax.panel.blame", "Blame") + "  ⇧⌘B", run: function () { gitBlame(); } },
       { id: "zmax.panel.docBlame", label: G + T("zmax.panel.doc_blame", "Document Blame") + "  ⇧⌘Y", run: function () { docBlame(); } },
       { id: "zmax.panel.gitHistory", label: G + T("zmax.panel.history", "File History"), run: function () { gitHistory(); } },
@@ -2002,6 +2298,7 @@
       { id: "zmax.panel.diffRevisions", label: G + T("zmax.panel.diff_revs", "Diff Revisions"), run: diffRevisions },
       { id: "zmax.panel.gitBranches", label: G + T("zmax.panel.branches", "Git Branches"), run: gitBranches },
       { id: "zmax.panel.gitStash", label: G + T("zmax.panel.stash", "Git Stash"), run: gitStash },
+      { id: "zmax.panel.gitTags", label: G + T("zmax.panel.tags", "Git Tags"), run: gitTags },
     ];
   }
   function registerPalette() { if (window.ZGui && ZGui.palette && ZGui.palette.register) ZGui.palette.register(myPaletteItems()); }

@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::process::Command;
 
 /// Run `git -C <dir> <args…>`, returning stdout on success or the trimmed stderr as the error.
-fn git_in(dir: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_in(dir: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -25,7 +25,7 @@ fn git_in(dir: &str, args: &[&str]) -> Result<String, String> {
 /// Reject a ref/branch name that git could mistake for an option (leading `-`) or that carries
 /// whitespace / control characters. Passing args positionally already blocks shell injection; this
 /// guards the remaining "name looks like a flag" foot-gun before it reaches `git checkout`.
-fn valid_ref(name: &str) -> bool {
+pub(crate) fn valid_ref(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')
         && !name.chars().any(|c| c.is_whitespace() || c.is_control())

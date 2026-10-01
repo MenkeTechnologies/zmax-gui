@@ -392,6 +392,37 @@
           return invoke("convert_encoding", { path: a.path, to: a.to, apply: false });
         },
       },
+      {
+        id: "zmax.lines.filterPreview", label: "Preview keep / flush lines", rev: "pure", returns: "object",
+        params: [P("path", "string", true), P("opts", "object", true)],
+        run: function (args) {
+          var a = args || {};
+          return invoke("filter_file_lines", { path: a.path, opts: Object.assign({}, a.opts || {}, { apply: false }) });
+        },
+      },
+      {
+        id: "zmax.lines.dedupePreview", label: "Preview delete duplicate lines", rev: "pure", returns: "object",
+        params: [P("path", "string", true), P("opts", "object")],
+        run: function (args) {
+          var a = args || {};
+          return invoke("dedupe_file_lines", { path: a.path, opts: Object.assign({}, a.opts || {}, { apply: false }) });
+        },
+      },
+      {
+        id: "zmax.git.commitInfo", label: "Branch, staged paths and tip message", rev: "pure", returns: "object",
+        params: [P("root", "string")],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_commit_info", { root: a.root }); }); },
+      },
+      {
+        id: "zmax.git.tags", label: "Tags, newest first", rev: "pure", returns: "array",
+        params: [P("root", "string")],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_tags", { root: a.root }); }); },
+      },
+      {
+        id: "zmax.git.tagShow", label: "What a tag points at", rev: "pure", returns: "string",
+        params: [P("root", "string"), P("name", "string", true)],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_tag_show", { root: a.root, name: a.name }); }); },
+      },
       pure("zmax.txn.snapshots", "Live compensation snapshots", "txn_list", [], "array"),
       // ── the crash record ────────────────────────────────────────────────────────────────────
       // A multi-step run journals itself to disk BEFORE each step (plan-panel.js → `txn_open` /
@@ -522,6 +553,28 @@
         landed: applied,
       }),
       reversible({
+        id: "zmax.lines.filterApply",
+        label: "Keep / flush a file's lines (reversible)",
+        params: [P("path", "string", true), P("opts", "object", true)],
+        plan: onePath,
+        apply: function (args) {
+          var a = args || {};
+          return invoke("filter_file_lines", { path: a.path, opts: Object.assign({}, a.opts || {}, { apply: true }) });
+        },
+        landed: applied,
+      }),
+      reversible({
+        id: "zmax.lines.dedupeApply",
+        label: "Delete a file's duplicate lines (reversible)",
+        params: [P("path", "string", true), P("opts", "object")],
+        plan: onePath,
+        apply: function (args) {
+          var a = args || {};
+          return invoke("dedupe_file_lines", { path: a.path, opts: Object.assign({}, a.opts || {}, { apply: true }) });
+        },
+        landed: applied,
+      }),
+      reversible({
         id: "zmax.doc.replace",
         label: "Replace inside binary documents (reversible)",
         params: [P("query", "string", true), P("replacement", "string", true), P("root", "string"), P("opts", "object")],
@@ -608,6 +661,40 @@
       oneWay("zmax.git.createBranch", "Create and switch to a branch", "git_create_branch", [P("root", "string"), P("name", "string", true)]),
       oneWay("zmax.git.stashSave", "Stash the working tree", "git_stash_save", [P("root", "string"), P("message", "string")]),
       oneWay("zmax.git.stashPop", "Pop a stash entry", "git_stash_pop", [P("root", "string"), P("index", "number")]),
+      {
+        // The inverse of creating a tag is deleting that same name. The root is resolved once and
+        // carried in the result, so the undo deletes in the repository the tag was made in.
+        id: "zmax.git.tagCreate", label: "Create a tag", rev: "inverse", returns: "object",
+        params: [P("root", "string"), P("name", "string", true), P("message", "string"), P("rev", "string")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_tag_create", { root: a.root, name: a.name, message: a.message || null, rev: a.rev || null })
+              .then(function () { return { root: a.root, name: a.name }; });
+          });
+        },
+        undo: function (args, result) {
+          var r = result || {};
+          return invoke("git_tag_delete", { root: r.root, name: r.name || (args || {}).name });
+        },
+      },
+      {
+        // A commit could be undone with a reset, but a reset also moves whatever the user staged
+        // after it — this app cannot tell those apart, so it does not claim to.
+        id: "zmax.git.commit", label: "Commit the staged index", rev: "irreversible", returns: "object",
+        params: [P("root", "string"), P("message", "string"), P("amend", "boolean"), P("signOff", "boolean")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_commit", { root: a.root, message: a.message || "", amend: !!a.amend, signOff: !!a.signOff })
+              .then(function (r) { emit("zmax.git.committed", { root: a.root, hash: r && r.hash, subject: r && r.subject }); return r; });
+          });
+        },
+      },
+      {
+        // An annotated tag's message is gone once its ref is deleted; nothing to restore it from.
+        id: "zmax.git.tagDelete", label: "Delete a tag", rev: "irreversible", returns: "null",
+        params: [P("root", "string"), P("name", "string", true)],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_tag_delete", { root: a.root, name: a.name }); }); },
+      },
       oneWay("zmax.git.stashDrop", "Drop a stash entry", "git_stash_drop", [P("root", "string"), P("index", "number")]),
       {
         // Drives the editor PTY: the buffer state afterwards is the editor's, not ours, so there is
@@ -710,7 +797,7 @@
       { id: "zmax.file.opened", payload: "{ path, line }" },
       { id: "zmax.file.saved", payload: "{ path }" },
       { id: "zmax.search.run", payload: "{ hits }" },
-      { id: "zmax.git.committed", payload: "{ root }" },
+      { id: "zmax.git.committed", payload: "{ root, hash, subject }" },
       { id: "zmax.txn.compensated", payload: "{ verb, report, conflicted }" },
       { id: "zmax.txn.recovered", payload: "{ id, restored, conflicted, undeclared, divergent }" },
     ];

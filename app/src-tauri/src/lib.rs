@@ -12,7 +12,9 @@ mod encoding_ops;
 mod fs_ops;
 mod git_ext;
 mod git_more;
+mod git_ops;
 mod git_tools;
+mod line_filter;
 mod open_intake;
 mod project;
 mod sidecar;
@@ -251,6 +253,17 @@ pub fn run() {
             git_more::git_show_commit,
             git_more::git_diff_revs,
             git_more::git_graph,
+            // Git write ops (panels.js): commit (+ amend / sign-off) and tags (list / create / delete /
+            // show).
+            git_ops::git_commit_info,
+            git_ops::git_commit,
+            git_ops::git_tags,
+            git_ops::git_tag_create,
+            git_ops::git_tag_delete,
+            git_ops::git_tag_show,
+            // Line filters (panels.js): keep / flush lines + delete duplicate lines over one file.
+            line_filter::filter_file_lines,
+            line_filter::dedupe_file_lines,
             // Shared multi-pane file browser (zpwr-file-browser crate, `tauri` feature) — the fs_*
             // commands its front end (fb-backend.js → file-browser.js) calls, plus the watcher.
             zpwr_file_browser::commands::fs_list_dir,
