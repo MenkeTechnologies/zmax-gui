@@ -575,7 +575,7 @@ vocabulary for a row with **no id** (it shows in `⌘K` but can never become an 
 and for an id containing **whitespace** (the fingerprint of a translated label used as an id), and
 records what it finds in `window.ZGui.diagnostics` and on a `zgui:diagnostic` document event. It
 prints nothing. `main.js` forwards each note to the `log_diagnostic` host command, which appends it
-to `zmax.log` — the file the Settings ▸ Diagnostics **Open log file** button reveals. Nothing reaches
+to `zmax.log` (every line opens with a local `YYYY-MM-DD HH:MM:SS` timestamp) — the file the Settings ▸ Diagnostics **Open log file** button reveals. Nothing reaches
 the terminal. zmax-gui's own vocabulary raises none of them — every published row carries a stable
 `zmax.*` id — so the channel is there for a future regression, not for a current one.
 
@@ -804,9 +804,10 @@ translator, not a place to translate.
 
 ## Releases
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the macOS app on Apple-silicon
-(`aarch64`) and Intel (`x86_64`) runners and attaches the per-arch `.dmg` + zipped `.app` to the
-GitHub release. The bundled zmax (release build of the submodule) and stryke (latest release) sidecars
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the macOS app on an Apple-silicon
+(`aarch64`) runner and attaches the `.dmg` + zipped `.app` to the GitHub release. The Intel (`x86_64`)
+leg is out of the matrix: its runners never scheduled. A `workflow_dispatch` run with an existing
+`tag` input rebuilds and re-uploads that release without cutting a new tag. The bundled zmax (release build of the submodule) and stryke (latest release) sidecars
 are staged automatically by `beforeBuildCommand`, so each `.app` is self-contained.
 
 ```sh
