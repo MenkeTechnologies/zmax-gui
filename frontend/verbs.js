@@ -181,6 +181,28 @@
 
   var P = function (name, type, required) { return { name: name, type: type, required: !!required }; };
 
+  // Cherry-pick / revert. A commit that lands is announced like any other commit; a stop on
+  // conflicts is a result (not a rejection) and is announced as `zmax.git.stopped`, so a script can
+  // hand the unmerged paths to `zmax.conflicts.*` and then `zmax.git.opContinue`.
+  function gitPick(id, label, cmd, canRecordOrigin) {
+    var params = [P("root", "string"), P("rev", "string", true), P("noCommit", "boolean")];
+    if (canRecordOrigin) params.push(P("recordOrigin", "boolean"));
+    return {
+      id: id, label: label, params: params, returns: "object", rev: "irreversible",
+      run: function (args) {
+        return withRoot(args).then(function (a) {
+          var req = { root: a.root, rev: a.rev, noCommit: !!a.noCommit };
+          if (canRecordOrigin) req.recordOrigin = !!a.recordOrigin;
+          return invoke(cmd, req).then(function (r) {
+            if (r && r.stopped) emit("zmax.git.stopped", { root: a.root, op: r.op, unmerged: r.unmerged });
+            else if (r && r.hash) emit("zmax.git.committed", { root: a.root, hash: r.hash, subject: r.subject });
+            return r;
+          });
+        });
+      },
+    };
+  }
+
   // ── project root ──────────────────────────────────────────────────────────────────────────────
   // `list_dir(null)` answers with the host's current directory, the same root panels.js works from.
   var rootCache = null;
@@ -423,6 +445,46 @@
         params: [P("root", "string"), P("name", "string", true)],
         run: function (args) { return withRoot(args).then(function (a) { return invoke("git_tag_show", { root: a.root, name: a.name }); }); },
       },
+      {
+        id: "zmax.git.reflog", label: "Where a ref has pointed, newest first", rev: "pure", returns: "array",
+        params: [P("root", "string"), P("refname", "string"), P("limit", "number")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_reflog", { root: a.root, refname: a.refname || null, limit: a.limit || null });
+          });
+        },
+      },
+      {
+        // mode: "pickaxe" (-S, added or removed the text), "regex" (-G, a changed line matches),
+        // "message" (--grep). opts: { ignore_case, path, all, limit }.
+        id: "zmax.git.logSearch", label: "Search history: pickaxe, diff regex or message", rev: "pure", returns: "array",
+        params: [P("query", "string", true), P("mode", "string", true), P("opts", "object"), P("root", "string")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_log_search", { root: a.root, query: a.query, opts: Object.assign({}, a.opts || {}, { mode: a.mode }) });
+          });
+        },
+      },
+      {
+        id: "zmax.git.opState", label: "The stopped cherry-pick / revert / merge / rebase and its unmerged paths", rev: "pure", returns: "object",
+        params: [P("root", "string")],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_op_state", { root: a.root }); }); },
+      },
+      {
+        id: "zmax.conflicts.scan", label: "Every file with merge-conflict markers", rev: "pure", returns: "object",
+        params: [P("root", "string"), P("showHidden", "boolean"), P("limit", "number")],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("conflict_scan", a); }); },
+      },
+      pure("zmax.conflicts.file", "One file's conflict hunks", "conflict_file", [P("path", "string", true)], "object"),
+      {
+        // take: "ours" | "theirs" | "base" | "both" | "all"; hunk: 0-based, every hunk when omitted.
+        id: "zmax.conflicts.preview", label: "Preview resolving a file's conflicts", rev: "pure", returns: "object",
+        params: [P("path", "string", true), P("take", "string", true), P("hunk", "number")],
+        run: function (args) {
+          var a = args || {};
+          return invoke("resolve_conflicts", { path: a.path, opts: { take: a.take, hunk: a.hunk == null ? null : a.hunk, apply: false } });
+        },
+      },
       pure("zmax.txn.snapshots", "Live compensation snapshots", "txn_list", [], "array"),
       // ── the crash record ────────────────────────────────────────────────────────────────────
       // A multi-step run journals itself to disk BEFORE each step (plan-panel.js → `txn_open` /
@@ -575,6 +637,19 @@
         landed: applied,
       }),
       reversible({
+        // Content only: resolving rewrites the file, it does not stage it, so the snapshot is the
+        // whole effect and restoring it puts the markers back.
+        id: "zmax.conflicts.resolve",
+        label: "Resolve a file's conflicts to one side (reversible)",
+        params: [P("path", "string", true), P("take", "string", true), P("hunk", "number")],
+        plan: onePath,
+        apply: function (args) {
+          var a = args || {};
+          return invoke("resolve_conflicts", { path: a.path, opts: { take: a.take, hunk: a.hunk == null ? null : a.hunk, apply: true } });
+        },
+        landed: applied,
+      }),
+      reversible({
         id: "zmax.doc.replace",
         label: "Replace inside binary documents (reversible)",
         params: [P("query", "string", true), P("replacement", "string", true), P("root", "string"), P("opts", "object")],
@@ -695,6 +770,38 @@
         params: [P("root", "string"), P("name", "string", true)],
         run: function (args) { return withRoot(args).then(function (a) { return invoke("git_tag_delete", { root: a.root, name: a.name }); }); },
       },
+      {
+        // Creating a branch at a revision moves no other ref and touches no file, so its inverse is
+        // exact — provided the branch has not moved since. The host's delete is a compare-and-delete
+        // against the hash the creation returned, so an undo after work landed on the branch fails
+        // instead of dropping that work.
+        id: "zmax.git.branchAt", label: "Create a branch at a revision without checking it out", rev: "inverse", returns: "object",
+        params: [P("root", "string"), P("name", "string", true), P("rev", "string", true)],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_branch_at", { root: a.root, name: a.name, rev: a.rev })
+              .then(function (r) { return { root: a.root, name: r.name, hash: r.hash }; });
+          });
+        },
+        undo: function (args, result) {
+          var r = result || {};
+          return invoke("git_branch_delete_at", { root: r.root, name: r.name, hash: r.hash });
+        },
+      },
+      // A pick or revert makes a commit (or stops mid-way with a conflicted tree); undoing either
+      // means a reset that would also move whatever was staged around it, so neither claims one.
+      gitPick("zmax.git.cherryPick", "Cherry-pick a commit onto the current branch", "git_cherry_pick", true),
+      gitPick("zmax.git.revert", "Revert a commit", "git_revert", false),
+      {
+        id: "zmax.git.opAbort", label: "Abort the stopped cherry-pick / revert / merge / rebase", rev: "irreversible", returns: "null",
+        params: [P("root", "string")],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_op_abort", { root: a.root }); }); },
+      },
+      {
+        id: "zmax.git.opContinue", label: "Continue the stopped operation once every conflict is staged", rev: "irreversible", returns: "object",
+        params: [P("root", "string")],
+        run: function (args) { return withRoot(args).then(function (a) { return invoke("git_op_continue", { root: a.root }); }); },
+      },
       oneWay("zmax.git.stashDrop", "Drop a stash entry", "git_stash_drop", [P("root", "string"), P("index", "number")]),
       {
         // Drives the editor PTY: the buffer state afterwards is the editor's, not ours, so there is
@@ -798,6 +905,7 @@
       { id: "zmax.file.saved", payload: "{ path }" },
       { id: "zmax.search.run", payload: "{ hits }" },
       { id: "zmax.git.committed", payload: "{ root, hash, subject }" },
+      { id: "zmax.git.stopped", payload: "{ root, op, unmerged }" },
       { id: "zmax.txn.compensated", payload: "{ verb, report, conflicted }" },
       { id: "zmax.txn.recovered", payload: "{ id, restored, conflicted, undeclared, divergent }" },
     ];

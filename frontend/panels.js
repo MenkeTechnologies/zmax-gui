@@ -1595,6 +1595,300 @@
     });
   }
 
+  // ── commit rows, cherry-pick / revert (git_pick.rs) ───────────────────────────────────────────────
+  // One row shape for every commit list (Repository Log, Reflog, Search History): badge, primary,
+  // secondary, and a click that shows the commit's diff in `diffPre`.
+  function commitRow(root, hash, badgeText, primary, secondary, diffPre) {
+    var row = document.createElement("div");
+    row.className = "zp-row";
+    var badge = document.createElement("span");
+    badge.className = "zp-badge";
+    badge.textContent = badgeText;
+    var name = document.createElement("span");
+    name.className = "zp-row-primary";
+    name.textContent = primary;
+    var sec = document.createElement("span");
+    sec.className = "zp-row-secondary";
+    sec.textContent = secondary;
+    row.appendChild(badge);
+    row.appendChild(name);
+    row.appendChild(sec);
+    row.addEventListener("click", function () {
+      invoke("git_show_commit", { root: root, hash: hash }).then(function (d) { diffPre.textContent = d || T("zmax.panel.no_diff", "(no diff)"); }, function (err) { diffPre.textContent = String(err); });
+    });
+    return row;
+  }
+  // The ⇡ / ⟲ buttons on a commit row. A commit that lands is announced like a panel commit; a stop
+  // on conflicts is not an error — it opens Merge Conflicts on the stopped tree.
+  function pickButtons(root, hash, subject) {
+    return [
+      gitActBtn("⇡", T("zmax.panel.cherry_pick", "Cherry-pick"), "", function () { applyCommit(root, hash, subject, false); }),
+      gitActBtn("⟲", T("zmax.panel.revert", "Revert"), "", function () { applyCommit(root, hash, subject, true); }),
+    ];
+  }
+  function applyCommit(root, hash, subject, revert) {
+    var title = revert ? T("zmax.panel.revert", "Revert") : T("zmax.panel.cherry_pick", "Cherry-pick");
+    var msg = revert
+      ? T("zmax.panel.revert_msg", "Make a new commit that undoes this one?")
+      : T("zmax.panel.cherry_pick_msg", "Apply this commit onto the current branch?");
+    ZGui.modal.confirm({ title: title, message: msg + "\n" + String(hash).slice(0, 8) + " " + (subject || "") }).then(function (ok) {
+      if (!ok) return;
+      invoke(revert ? "git_revert" : "git_cherry_pick", { root: root, rev: hash, noCommit: false }).then(function (r) {
+        if (r && r.stopped) {
+          toast(title + ": " + T("zmax.panel.stopped_conflicts", "stopped on conflicts in") + " " + r.unmerged.length + " " + T("zmax.panel.files", "files"), "error");
+          mergeConflicts();
+          return;
+        }
+        if (r && r.hash) announceCommit(root, r);
+        toast(title + (r && r.subject ? ": " + r.subject : ""));
+      }, function (err) { toast(String(err), "error"); });
+    });
+  }
+
+  // ── merge conflicts (conflicts.rs: smerge over the tree; git_pick.rs: the stopped operation) ─────
+  // Every hunk in every file with conflict markers, whatever produced them. A hunk resolves to one
+  // side in place; when a file's last hunk goes and git lists that file as unmerged, it is staged —
+  // the vc-git default (`vc-git-resolve-conflicts`), so Continue is one click away rather than a
+  // trip through Git Changes. A malformed file is listed and opened, never rewritten.
+  function mergeConflicts() {
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var head = document.createElement("div");
+      head.className = "zp-count";
+      body.appendChild(head);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+      var hunkPre = document.createElement("pre");
+      hunkPre.className = "zp-diff";
+      body.appendChild(hunkPre);
+      var state = { op: null, unmerged: [] };
+
+      function isUnmerged(path) {
+        return state.unmerged.some(function (u) { return path === u || path.slice(-(u.length + 1)) === "/" + u; });
+      }
+      function showHunk(f, h) {
+        var out = ["<<<<<<< " + h.ours_label].concat(h.ours);
+        if (h.base) out = out.concat(["||||||| " + (h.base_label || "")], h.base);
+        out = out.concat(["======="], h.theirs, [">>>>>>> " + h.theirs_label]);
+        hunkPre.textContent = f.rel + ":" + h.start_line + "\n" + out.join("\n");
+      }
+      function resolve(f, h, take) {
+        invoke("resolve_conflicts", { path: f.path, opts: { take: take, hunk: h.index, apply: true } }).then(function (r) {
+          if (r.remaining === 0 && isUnmerged(f.path)) {
+            return invoke("git_stage", { path: f.path }).then(function () {
+              toast(f.rel + ": " + T("zmax.panel.conflicts_resolved_staged", "resolved and staged"));
+            });
+          }
+          toast(f.rel + ": " + r.remaining + " " + T("zmax.panel.conflicts_left", "conflicts left"));
+        }).then(reload, function (err) { toast(String(err), "error"); reload(); });
+      }
+      function render(scan) {
+        list.textContent = "";
+        hunkPre.textContent = "";
+        head.textContent = (state.op
+          ? state.op + " " + T("zmax.panel.op_in_progress", "in progress") + " · " + state.unmerged.length + " " + T("zmax.panel.unmerged", "unmerged")
+          : T("zmax.panel.no_op", "No cherry-pick, revert, merge or rebase in progress"))
+          + " · " + scan.total_hunks + " " + T("zmax.panel.conflicts_n", "conflicts")
+          + (scan.truncated ? " · " + T("zmax.panel.preview_capped", "preview capped") : "");
+        if (!scan.files.length) {
+          var none = document.createElement("div");
+          none.className = "zp-count";
+          none.textContent = T("zmax.panel.no_conflicts", "No conflict markers in the project");
+          list.appendChild(none);
+          return;
+        }
+        scan.files.forEach(function (f) {
+          if (f.malformed) {
+            var bad = document.createElement("div");
+            bad.className = "zp-row";
+            var bb = document.createElement("span");
+            bb.className = "zp-badge";
+            bb.textContent = "!";
+            var bp = document.createElement("span");
+            bp.className = "zp-row-primary";
+            bp.textContent = f.rel + ":" + f.malformed_line;
+            var bs = document.createElement("span");
+            bs.className = "zp-row-secondary";
+            bs.textContent = T("zmax.panel.conflict_malformed", "malformed markers — fix by hand") + ": " + f.malformed;
+            bad.appendChild(bb); bad.appendChild(bp); bad.appendChild(bs);
+            bad.addEventListener("click", function () { openInEditor(f.path, f.malformed_line); });
+            list.appendChild(bad);
+          }
+          f.hunks.forEach(function (h) {
+            var row = document.createElement("div");
+            row.className = "zp-row";
+            var badge = document.createElement("span");
+            badge.className = "zp-badge";
+            badge.textContent = String(h.start_line);
+            var name = document.createElement("span");
+            name.className = "zp-row-primary";
+            name.textContent = f.rel;
+            var sec = document.createElement("span");
+            sec.className = "zp-row-secondary";
+            sec.textContent = (h.ours_label || "ours") + " (" + h.ours_lines + ") ⟷ " + (h.theirs_label || "theirs") + " (" + h.theirs_lines + ")"
+              + (h.base ? " · " + T("zmax.panel.conflict_base", "base") + " (" + h.base_lines + ")" : "");
+            row.appendChild(badge); row.appendChild(name); row.appendChild(sec);
+            row.addEventListener("click", function () { showHunk(f, h); });
+            if (f.malformed) { list.appendChild(row); return; }
+            row.appendChild(gitActBtn(T("zmax.panel.take_ours", "Ours"), T("zmax.panel.take_ours_tip", "Keep the upper side (smerge-keep-upper)"), "", function () { resolve(f, h, "ours"); }));
+            row.appendChild(gitActBtn(T("zmax.panel.take_theirs", "Theirs"), T("zmax.panel.take_theirs_tip", "Keep the lower side (smerge-keep-lower)"), "", function () { resolve(f, h, "theirs"); }));
+            row.appendChild(gitActBtn(T("zmax.panel.take_both", "Both"), T("zmax.panel.take_both_tip", "Keep ours, then theirs"), "", function () { resolve(f, h, "both"); }));
+            if (h.base) row.appendChild(gitActBtn(T("zmax.panel.take_base", "Base"), T("zmax.panel.take_base_tip", "Keep the common ancestor (smerge-keep-base)"), "", function () { resolve(f, h, "base"); }));
+            row.appendChild(gitActBtn(T("zmax.panel.open", "Open"), "", "", function () { openInEditor(f.path, h.start_line); dlg.close(); }));
+            list.appendChild(row);
+          });
+        });
+      }
+      function reload() {
+        // A tree that is not a repository still has conflict files worth resolving (a patch tool,
+        // an unpacked archive), so the op state failing only blanks the header.
+        invoke("git_op_state", { root: root }).then(function (s) { state = s || state; }, function () { state = { op: null, unmerged: [] }; })
+          .then(function () { return invoke("conflict_scan", { root: root }); })
+          .then(render, function (err) { toast(String(err), "error"); });
+      }
+      function abortOp() {
+        if (!state.op) { toast(T("zmax.panel.no_op", "No cherry-pick, revert, merge or rebase in progress")); return; }
+        ZGui.modal.confirm({ title: T("zmax.panel.op_abort", "Abort"), message: T("zmax.panel.op_abort_msg", "Abort the operation and restore the branch as it was before it started?") + "\n" + state.op }).then(function (ok) {
+          if (!ok) return;
+          invoke("git_op_abort", { root: root }).then(function () { toast(state.op + " " + T("zmax.panel.op_aborted", "aborted")); reload(); }, function (err) { toast(String(err), "error"); });
+        });
+      }
+      function continueOp() {
+        if (!state.op) { toast(T("zmax.panel.no_op", "No cherry-pick, revert, merge or rebase in progress")); return; }
+        var op = state.op;
+        invoke("git_op_continue", { root: root }).then(function () { toast(op + " " + T("zmax.panel.op_continued", "continued")); reload(); }, function (err) { toast(String(err), "error"); });
+      }
+
+      var dlg = ZGui.modal.open({
+        title: T("zmax.panel.merge_conflicts", "Merge Conflicts"),
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [
+          { label: T("zmax.panel.op_continue", "Continue"), close: false, onClick: continueOp },
+          { label: T("zmax.panel.op_abort", "Abort"), close: false, onClick: abortOp },
+          { label: T("zmax.panel.refresh", "Refresh"), close: false, onClick: reload },
+          { label: T("zmax.dialog.close", "Close"), close: true },
+        ],
+      });
+      reload();
+    });
+  }
+
+  // ── git reflog (git_history.rs): where HEAD has been, and recovering what no branch reaches ───────
+  function gitReflog() {
+    getRoot().then(function (root) {
+      invoke("git_reflog", { root: root, refname: null, limit: 500 }).then(function (entries) {
+        var body = document.createElement("div");
+        body.className = "zp-git";
+        var list = document.createElement("div");
+        list.className = "zp-list";
+        var diffPre = document.createElement("pre");
+        diffPre.className = "zp-diff";
+        if (!entries || !entries.length) { var e = document.createElement("div"); e.className = "zp-count"; e.textContent = T("zmax.panel.no_reflog", "Empty reflog"); list.appendChild(e); }
+        (entries || []).forEach(function (en) {
+          var row = commitRow(root, en.hash, en.selector, en.action + (en.message ? " · " + en.message : ""), en.short + " · " + en.date, diffPre);
+          row.appendChild(gitActBtn("⎇", T("zmax.panel.branch_here", "Branch here…"), "", function () {
+            ZGui.modal.prompt({ title: T("zmax.panel.branch_here", "Branch here…"), message: T("zmax.panel.branch_here_msg", "New branch at") + " " + en.selector + " (" + en.short + "):", placeholder: "rescue" }).then(function (name) {
+              if (!name || !name.trim()) return;
+              invoke("git_branch_at", { root: root, name: name.trim(), rev: en.hash }).then(function (b) { toast(T("zmax.panel.branch_created", "Branch created") + ": " + b.name); }, function (err) { toast(String(err), "error"); });
+            }).catch(function () {});
+          }));
+          pickButtons(root, en.hash, en.message).forEach(function (b) { row.appendChild(b); });
+          list.appendChild(row);
+        });
+        body.appendChild(list);
+        body.appendChild(diffPre);
+        ZGui.modal.open({
+          title: T("zmax.panel.reflog", "Git Reflog"),
+          body: body,
+          className: "zp-modal zp-git-modal",
+          actions: [{ label: T("zmax.dialog.close", "Close"), close: true }],
+        });
+      }, function (err) { toast(T("zmax.panel.not_git", "Not a git repository") + (err ? ": " + err : ""), "error"); });
+    });
+  }
+
+  // ── search history (git_history.rs): pickaxe -S, diff regex -G, commit message --grep ─────────────
+  function historySearch() {
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var input = document.createElement("input");
+      input.type = "text"; input.className = "zp-input"; input.placeholder = T("zmax.panel.history_search_ph", "Text a commit added or removed…");
+      input.autocomplete = "off"; input.autocapitalize = "off"; input.spellcheck = false; input.setAttribute("autocorrect", "off");
+      body.appendChild(input);
+      var pathIn = document.createElement("input");
+      pathIn.type = "text"; pathIn.className = "zp-input"; pathIn.placeholder = T("zmax.panel.history_path_ph", "Limit to a path (optional)");
+      pathIn.autocomplete = "off"; pathIn.autocapitalize = "off"; pathIn.spellcheck = false; pathIn.setAttribute("autocorrect", "off");
+      body.appendChild(pathIn);
+      var controls = document.createElement("div");
+      controls.className = "zp-opts";
+      // One mode at a time: three buttons, exactly one on.
+      var modes = [
+        ["pickaxe", "-S", T("zmax.panel.history_pickaxe", "Added or removed this text (pickaxe -S)")],
+        ["regex", "-G", T("zmax.panel.history_regex", "A changed line matches this regex (-G)")],
+        ["message", "msg", T("zmax.panel.history_message", "The commit message matches (--grep)")],
+      ];
+      var chosen = { mode: "pickaxe" };
+      var toggles = modes.map(function (m) {
+        var o = optToggle(m[1], m[2]);
+        if (m[0] === chosen.mode) { o.on = true; o.el.classList.add("active"); }
+        controls.appendChild(o.el);
+        return o;
+      });
+      toggles.forEach(function (o, i) {
+        o.onChange = function () {
+          chosen.mode = modes[i][0];
+          toggles.forEach(function (other) { other.on = other === o; other.el.classList.toggle("active", other === o); });
+          run();
+        };
+      });
+      var ci = optToggle("Aa", T("zmax.panel.case_insensitive", "Ignore case"));
+      var all = optToggle(T("zmax.panel.history_all", "All refs"), T("zmax.panel.history_all_tip", "Search every branch and tag, not only the current branch"));
+      controls.appendChild(ci.el);
+      controls.appendChild(all.el);
+      body.appendChild(controls);
+      var count = document.createElement("div");
+      count.className = "zp-count";
+      body.appendChild(count);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+      var diffPre = document.createElement("pre");
+      diffPre.className = "zp-diff";
+      body.appendChild(diffPre);
+
+      var run = debounce(function () {
+        var q = input.value;
+        if (!q) { count.textContent = ""; list.textContent = ""; return; }
+        var opts = { mode: chosen.mode, ignore_case: ci.on, all: all.on, path: pathIn.value.trim() || null, limit: 300 };
+        invoke("git_log_search", { root: root, query: q, opts: opts }).then(function (commits) {
+          list.textContent = "";
+          diffPre.textContent = "";
+          count.textContent = commits.length + " " + T("zmax.panel.commits", "commits");
+          commits.forEach(function (c) {
+            var row = commitRow(root, c.hash, c.short, (c.refs ? "(" + c.refs + ") " : "") + c.subject, c.author + " · " + c.date, diffPre);
+            pickButtons(root, c.hash, c.subject).forEach(function (b) { row.appendChild(b); });
+            list.appendChild(row);
+          });
+        }, function (err) { count.textContent = String(err); list.textContent = ""; });
+      }, 300);
+      ci.onChange = all.onChange = run;
+      input.addEventListener("input", run);
+      pathIn.addEventListener("input", run);
+
+      ZGui.modal.open({
+        title: T("zmax.panel.history_search", "Search History"),
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [{ label: T("zmax.dialog.close", "Close"), close: true }],
+      });
+      setTimeout(function () { input.focus(); }, 30);
+    });
+  }
+
   // ── find definition (jump to where an exact symbol is declared) ───────────────────────────────────
   function findDefinition() {
     getRoot().then(function (root) {
@@ -2112,23 +2406,8 @@
         diffPre.className = "zp-diff";
         if (!commits || !commits.length) { var e = document.createElement("div"); e.className = "zp-count"; e.textContent = T("zmax.panel.no_history", "No history for this file"); list.appendChild(e); }
         (commits || []).forEach(function (c) {
-          var row = document.createElement("div");
-          row.className = "zp-row";
-          var badge = document.createElement("span");
-          badge.className = "zp-badge";
-          badge.textContent = c.short;
-          var name = document.createElement("span");
-          name.className = "zp-row-primary";
-          name.textContent = (c.refs ? "(" + c.refs + ") " : "") + c.subject;
-          var sec = document.createElement("span");
-          sec.className = "zp-row-secondary";
-          sec.textContent = c.author + " · " + c.date;
-          row.appendChild(badge);
-          row.appendChild(name);
-          row.appendChild(sec);
-          row.addEventListener("click", function () {
-            invoke("git_show_commit", { root: root, hash: c.hash }).then(function (d) { diffPre.textContent = d || T("zmax.panel.no_diff", "(no diff)"); }, function (err) { diffPre.textContent = String(err); });
-          });
+          var row = commitRow(root, c.hash, c.short, (c.refs ? "(" + c.refs + ") " : "") + c.subject, c.author + " · " + c.date, diffPre);
+          pickButtons(root, c.hash, c.subject).forEach(function (b) { row.appendChild(b); });
           list.appendChild(row);
         });
         body.appendChild(list);
@@ -2299,6 +2578,9 @@
       { id: "zmax.panel.gitBranches", label: G + T("zmax.panel.branches", "Git Branches"), run: gitBranches },
       { id: "zmax.panel.gitStash", label: G + T("zmax.panel.stash", "Git Stash"), run: gitStash },
       { id: "zmax.panel.gitTags", label: G + T("zmax.panel.tags", "Git Tags"), run: gitTags },
+      { id: "zmax.panel.mergeConflicts", label: G + T("zmax.panel.merge_conflicts", "Merge Conflicts"), run: mergeConflicts },
+      { id: "zmax.panel.gitReflog", label: G + T("zmax.panel.reflog", "Git Reflog"), run: gitReflog },
+      { id: "zmax.panel.historySearch", label: G + T("zmax.panel.history_search", "Search History"), run: historySearch },
     ];
   }
   function registerPalette() { if (window.ZGui && ZGui.palette && ZGui.palette.register) ZGui.palette.register(myPaletteItems()); }

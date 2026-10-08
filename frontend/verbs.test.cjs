@@ -288,3 +288,78 @@ test("a commit is irreversible, refused inside a transaction, and announced when
   await assert.rejects(() => env.A.call("zmax.git.commit", { message: "again" }), /not reversible/);
   assert.equal(env.of("git_commit").length, 1, "the refused commit must not have run");
 });
+
+test("conflict resolution: the preview never writes, the resolve snapshots the one file and keeps the hunk address", async () => {
+  const env = boot({
+    resolve_conflicts: (a) => ({ applied: !!a.opts.apply, differs: true, remaining: 1, resolved: 1, hunks_before: 2 }),
+  });
+  const s = env.A.surface();
+  for (const id of ["zmax.conflicts.scan", "zmax.conflicts.file", "zmax.conflicts.preview"]) assert.equal(verbById(s, id).rev, "pure", id);
+  assert.equal(verbById(s, "zmax.conflicts.resolve").rev, "inverse");
+
+  await env.A.call("zmax.conflicts.preview", { path: "/proj/a.rs", take: "theirs", hunk: 0 });
+  assert.equal(env.of("txn_snapshot").length, 0, "a preview must not take a snapshot");
+  const r = await env.A.call("zmax.conflicts.resolve", { path: "/proj/a.rs", take: "ours", hunk: 1 });
+  // Hunk 0 is a real address, not "every hunk": it must not collapse to null on the way through.
+  assert.deepEqual(env.of("resolve_conflicts").map((c) => c.args.opts), [
+    { take: "theirs", hunk: 0, apply: false },
+    { take: "ours", hunk: 1, apply: true },
+  ]);
+  await env.A.call("zmax.conflicts.resolve", { path: "/proj/b.rs", take: "both" });
+  assert.equal(env.of("resolve_conflicts")[2].args.opts.hunk, null, "no hunk means every hunk");
+  assert.deepEqual(env.of("txn_snapshot").map((c) => c.args.paths), [["/proj/a.rs"], ["/proj/b.rs"]]);
+  assert.ok(r.txn, "an applied resolution must carry its compensation token");
+});
+
+test("a branch made at a revision is undone by a compare-and-delete against the hash it was made at", async () => {
+  const env = boot({
+    git_branch_at: (a) => ({ name: a.name, hash: "f".repeat(40) }),
+    git_branch_delete_at: () => null,
+  });
+  assert.equal(verbById(env.A.surface(), "zmax.git.branchAt").rev, "inverse");
+  const res = await env.A.call("zmax.git.branchAt", { name: "rescue", rev: "HEAD@{2}" });
+  assert.deepEqual(env.of("git_branch_at")[0].args, { root: "/proj", name: "rescue", rev: "HEAD@{2}" });
+  await env.A.undo("zmax.git.branchAt", { name: "rescue", rev: "HEAD@{2}" }, res);
+  assert.deepEqual(env.of("git_branch_delete_at").map((c) => c.args),
+    [{ root: "/proj", name: "rescue", hash: "f".repeat(40) }],
+    "the undo must name the commit, or it could delete work landed on the branch since");
+});
+
+test("cherry-pick / revert are irreversible; a landed pick is a commit, a conflict stop is announced as a stop", async () => {
+  let stop = false;
+  const pick = () => (stop
+    ? { stopped: true, op: "cherry-pick", unmerged: ["f.txt"], hash: null, subject: null }
+    : { stopped: false, op: null, unmerged: [], hash: "abc123", subject: "add b" });
+  const env = boot({ git_cherry_pick: pick, git_revert: pick, git_op_abort: () => null, git_op_continue: () => ({ op: null, unmerged: [] }) });
+  const s = env.A.surface();
+  for (const id of ["zmax.git.cherryPick", "zmax.git.revert", "zmax.git.opAbort", "zmax.git.opContinue"]) {
+    assert.equal(verbById(s, id).rev, "irreversible", id);
+  }
+  assert.equal(verbById(s, "zmax.git.reflog").rev, "pure");
+  assert.equal(verbById(s, "zmax.git.logSearch").rev, "pure");
+
+  const committed = [], stopped = [];
+  env.A.on("zmax.git.committed", (p) => committed.push(p));
+  env.A.on("zmax.git.stopped", (p) => stopped.push(p));
+  await env.A.call("zmax.git.cherryPick", { rev: "abc", recordOrigin: true });
+  assert.deepEqual(env.of("git_cherry_pick")[0].args, { root: "/proj", rev: "abc", noCommit: false, recordOrigin: true });
+  stop = true;
+  const r = await env.A.call("zmax.git.revert", { rev: "def", recordOrigin: true });
+  assert.equal(r.stopped, true, "a conflict stop resolves, it does not reject");
+  assert.deepEqual(env.of("git_revert")[0].args, { root: "/proj", rev: "def", noCommit: false },
+    "revert has no -x: the option must not reach the host");
+  assert.deepEqual(committed, [{ root: "/proj", hash: "abc123", subject: "add b" }]);
+  assert.deepEqual(stopped, [{ root: "/proj", op: "cherry-pick", unmerged: ["f.txt"] }]);
+
+  env.A.txnBegin();
+  await assert.rejects(() => env.A.call("zmax.git.cherryPick", { rev: "abc" }), /not reversible/);
+  assert.equal(env.of("git_cherry_pick").length, 1, "the refused pick must not have run");
+});
+
+test("history search carries the mode into the host's opts and keeps the caller's flags", async () => {
+  const env = boot({ git_log_search: () => [] });
+  await env.A.call("zmax.git.logSearch", { query: "fn alpha", mode: "regex", opts: { ignore_case: true, path: "src" } });
+  assert.deepEqual(env.of("git_log_search")[0].args, {
+    root: "/proj", query: "fn alpha", opts: { ignore_case: true, path: "src", mode: "regex" },
+  });
+});

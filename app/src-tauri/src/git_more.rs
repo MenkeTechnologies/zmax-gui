@@ -40,7 +40,7 @@ fn valid_rev(rev: &str) -> bool {
 
 // ── dep-free civil date (unix seconds → YYYY-MM-DD, UTC) ─────────────────────────────────────────
 // Same Howard-Hinnant conversion as git_tools.rs; kept local so this module has no cross-file coupling.
-fn fmt_date(secs: i64) -> String {
+pub(crate) fn fmt_date(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -71,7 +71,7 @@ pub struct RepoCommit {
 }
 
 /// Parse the `%H\x1f%an\x1f%at\x1f%s\x1f%D` log stream into commits. Pure — unit tested.
-fn parse_repo_log(out: &str) -> Vec<RepoCommit> {
+pub(crate) fn parse_repo_log(out: &str) -> Vec<RepoCommit> {
     let mut commits = Vec::new();
     for line in out.lines() {
         let mut it = line.split('\x1f');

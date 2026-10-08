@@ -439,3 +439,118 @@ test("keep / flush lines: previews the picked file, flips mode, and applies only
   assert.equal(applied.args.opts.apply, true);
   assert.equal(applied.args.opts.keep, false);
 });
+
+// ── merge conflicts, cherry-pick / revert, history search ───────────────────────────────────────
+
+const hunk = (index, start, base) => ({
+  index, start_line: start, end_line: start + 4, ours_label: "HEAD", theirs_label: "topic",
+  base_label: base ? "base" : null, ours: ["o"], base: base ? ["b"] : null, theirs: ["t"],
+  ours_lines: 1, base_lines: base ? 1 : 0, theirs_lines: 1,
+});
+const btn = (row, label) => row.children.find((c) => c.textContent === label);
+const rowFor = (env, text) => env.of("zp-row").find((r) => r.children.some((c) => c.textContent === text));
+
+test("merge conflicts: each hunk resolves in place, and a file's last hunk stages it only when git lists it unmerged", async () => {
+  let remaining = 1;
+  const env = await bootPanels({
+    git_op_state: { op: "cherry-pick", unmerged: ["src/a.rs"] },
+    conflict_scan: {
+      total_hunks: 3, truncated: false,
+      files: [
+        { path: "/proj/src/a.rs", rel: "src/a.rs", hunks: [hunk(0, 2, true), hunk(1, 9, false)], malformed: null, malformed_line: null },
+        { path: "/proj/notes.txt", rel: "notes.txt", hunks: [hunk(0, 1, false)], malformed: null, malformed_line: null },
+        { path: "/proj/bad.txt", rel: "bad.txt", hunks: [], malformed: "conflict is not closed", malformed_line: 4 },
+      ],
+    },
+    resolve_conflicts: () => ({ remaining: remaining--, resolved: 1, applied: true, differs: true }),
+    git_stage: null,
+  });
+  recordModals(env);
+  runCommand(env, "zmax.panel.mergeConflicts");
+  await tick(); await tick(); await tick();
+
+  const rows = env.of("zp-row").filter((r) => r.children.some((c) => c.textContent === "src/a.rs"));
+  assert.equal(rows.length, 2, "one row per hunk");
+  assert.ok(btn(rows[0], "Base"), "a diff3 hunk offers its base");
+  assert.ok(!btn(rows[1], "Base"), "a merge-style hunk has no base to keep");
+  const bad = rowFor(env, "bad.txt:4");
+  assert.ok(bad && !btn(bad, "Ours"), "a malformed file is listed but never offered a rewrite");
+
+  btn(rows[1], "Theirs").fire("click", { stopPropagation() {} });
+  await tick(); await tick();
+  assert.deepEqual(env.sent("resolve_conflicts")[0].args, { path: "/proj/src/a.rs", opts: { take: "theirs", hunk: 1, apply: true } });
+  assert.equal(env.sent("git_stage").length, 0, "a file with a hunk left must not be staged");
+
+  btn(rows[0], "Ours").fire("click", { stopPropagation() {} });
+  await tick(); await tick(); await tick();
+  assert.deepEqual(env.sent("git_stage").map((c) => c.args), [{ path: "/proj/src/a.rs" }],
+    "the last hunk of an unmerged file stages it");
+
+  // notes.txt is not in git's unmerged list (markers from a patch tool): resolved, never staged.
+  remaining = 0;
+  btn(rowFor(env, "notes.txt"), "Both").fire("click", { stopPropagation() {} });
+  await tick(); await tick(); await tick();
+  assert.equal(env.sent("git_stage").length, 1);
+  assert.ok(env.sent("conflict_scan").length >= 3, "every resolution rescans the tree");
+});
+
+test("merge conflicts: Continue and Abort drive the stopped operation", async () => {
+  const env = await bootPanels({
+    git_op_state: { op: "revert", unmerged: [] },
+    conflict_scan: { total_hunks: 0, truncated: false, files: [] },
+    git_op_continue: { op: null, unmerged: [] },
+    git_op_abort: null,
+  });
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.mergeConflicts");
+  await tick(); await tick(); await tick();
+  const modal = opened[opened.length - 1];
+  assert.equal(modal.title, "Merge Conflicts");
+  action(modal, "Continue").onClick();
+  await tick();
+  assert.deepEqual(env.sent("git_op_continue").map((c) => c.args), [{ root: "/proj" }]);
+  action(modal, "Abort").onClick();
+  await tick(); await tick();
+  assert.deepEqual(env.sent("git_op_abort").map((c) => c.args), [{ root: "/proj" }]);
+});
+
+test("cherry-pick from the repository log: a conflict stop opens Merge Conflicts instead of failing", async () => {
+  const env = await bootPanels({
+    git_log_repo: [{ hash: "abc1234567", short: "abc12345", author: "a", date: "2026-01-01", subject: "topic edit", refs: "" }],
+    git_cherry_pick: { stopped: true, op: "cherry-pick", unmerged: ["f.txt"], hash: null, subject: null },
+    git_op_state: { op: "cherry-pick", unmerged: ["f.txt"] },
+    conflict_scan: { total_hunks: 0, truncated: false, files: [] },
+  });
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.gitLog");
+  await tick(); await tick();
+  btn(rowFor(env, "topic edit"), "⇡").fire("click", { stopPropagation() {} });
+  await tick(); await tick(); await tick(); await tick();
+  assert.deepEqual(env.sent("git_cherry_pick").map((c) => c.args), [{ root: "/proj", rev: "abc1234567", noCommit: false }]);
+  assert.equal(opened[opened.length - 1].title, "Merge Conflicts");
+});
+
+test("search history: the mode buttons are exclusive and every flag reaches git_log_search", async () => {
+  const env = await bootPanels({ git_log_search: [] });
+  recordModals(env);
+  runCommand(env, "zmax.panel.historySearch");
+  await tick();
+  const [query, pathIn] = env.of("zp-input");
+  query.value = "fn alpha";
+  query.fire("input");
+  env.flush(); await tick();
+  assert.deepEqual(env.sent("git_log_search")[0].args, {
+    root: "/proj", query: "fn alpha",
+    opts: { mode: "pickaxe", ignore_case: false, all: false, path: null, limit: 300 },
+  });
+  const g = env.of("zp-opt").find((b) => b.textContent === "-G");
+  const s = env.of("zp-opt").find((b) => b.textContent === "-S");
+  g.fire("click");
+  env.of("zp-opt").find((b) => b.textContent === "Aa").fire("click");
+  pathIn.value = " src/ ";
+  pathIn.fire("input");
+  env.flush(); await tick();
+  const last = env.sent("git_log_search").pop().args.opts;
+  assert.deepEqual(last, { mode: "regex", ignore_case: true, all: false, path: "src/", limit: 300 });
+  assert.ok(g.classList.contains("active") && !s.classList.contains("active"), "exactly one mode is on");
+});

@@ -44,13 +44,13 @@ pub struct LineEditResult {
 }
 
 /// A text file split into lines, with what is needed to put it back together byte-for-byte.
-struct Lines<'a> {
-    lines: Vec<&'a str>,
-    eol: &'static str,
-    trailing_nl: bool,
+pub(crate) struct Lines<'a> {
+    pub(crate) lines: Vec<&'a str>,
+    pub(crate) eol: &'static str,
+    pub(crate) trailing_nl: bool,
 }
 
-fn split(content: &str) -> Lines<'_> {
+pub(crate) fn split(content: &str) -> Lines<'_> {
     let eol = if content.contains("\r\n") {
         "\r\n"
     } else {
@@ -194,7 +194,7 @@ fn dedupe_mask(lines: &[&str], opts: &DedupeOpts) -> Vec<bool> {
 
 // ── shared preview / apply ─────────────────────────────────────────────────────────────────────────
 
-fn read_text(path: &Path) -> Result<String, String> {
+pub(crate) fn read_text(path: &Path) -> Result<String, String> {
     if fs::metadata(path)
         .map(|m| m.len() > MAX_GREP_FILE_BYTES)
         .unwrap_or(true)

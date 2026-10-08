@@ -54,6 +54,10 @@ zmax-gui/
 │   ├─ encoding_ops.rs   detect + transcode a file's character encoding (UTF-8/16, Latin-1)
 │   ├─ git_more.rs       repo-wide log, show-commit, diff two revisions, commit graph
 │   ├─ git_ops.rs        git commit (amend / sign-off) + tags (list / create / delete / show)
+│   ├─ git_history.rs    reflog, branch at a revision (+ compare-and-delete undo), pickaxe / regex /
+│   │                    message history search
+│   ├─ git_pick.rs       cherry-pick / revert + the stopped operation's state / abort / continue
+│   ├─ conflicts.rs      merge-conflict hunks across the tree, resolved to ours / theirs / base / both / all
 │   ├─ line_filter.rs    keep / flush lines + delete duplicate lines over one file
 │   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
 │   ├─ open_intake.rs    CLI / Finder / mvim:// file opens → :open in the PTY
@@ -101,7 +105,8 @@ zmax-gui/
    ├─ plan-domain.js            its grid DOMAIN (operations × files) for zpwr-clip-engine
    ├─ vocabulary.test.cjs       drives all three command publishers headlessly (see below)
    ├─ wiring.test.cjs           what those surfaces actually invoke: PTY geometry, document search,
-   │                            the Git Commit panel, Keep / Flush Lines
+   │                            the Git Commit panel, Keep / Flush Lines, Merge Conflicts,
+   │                            cherry-pick conflict stops, Search History
    ├─ lib/zgui-core             the shared widget library, copied from the pinned `zgui-core` pnpm
    │                            git dependency by copy-zgui-core.mjs (gitignored)
    └─ lib/zpwr-clip-engine      the shared arrangement-grid engine (submodule)
@@ -113,8 +118,8 @@ On top of the MacVim menu surface, the app adds an IDE-style **project workbench
 from the **⌘K command palette** (and dedicated shortcuts). Every result is opened by driving the
 editor (`:open <path>:<line>:<col>`); the OS-side work (walking the tree, grepping, filesystem
 mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.rs` / `git_ext.rs` /
-`text_tools.rs` / `edit_ops.rs` / `encoding_ops.rs` / `git_more.rs` / `git_ops.rs` / `line_filter.rs` /
-`workbench_ext.rs` commands, so
+`text_tools.rs` / `edit_ops.rs` / `encoding_ops.rs` / `git_more.rs` / `git_ops.rs` / `git_history.rs` /
+`git_pick.rs` / `conflicts.rs` / `line_filter.rs` / `workbench_ext.rs` commands, so
 results are fast and the editor stays the single source of truth.
 
 - **Quick Open** (`⌘P`) — fuzzy file finder over the project tree (VCS/build dirs pruned), boundary-
@@ -226,6 +231,31 @@ results are fast and the editor stays the single source of truth.
   resolves to; click one to **show** it (`git show refs/tags/<name>`), **✕** to delete (confirmed),
   **New Tag** to create one — annotated when given a message, lightweight when not, at `HEAD` or any
   revision. Names and revisions are flag-guarded.
+- **Git Reflog** — Magit's `magit-reflog`: where `HEAD` has pointed, newest first — every commit,
+  amend, checkout, reset and rebase step, including commits no branch reaches any more. Each row shows
+  its selector (`HEAD@{3}`), the operation and its message; click for the commit's diff, **⎇ Branch
+  here…** to create a branch at that entry **without checking it out** (the way a reset-away or
+  dropped commit is recovered), or cherry-pick / revert it.
+- **Search History** — `magit-log` with `-S` / `-G` / `--grep`: the commits that **added or removed**
+  a string (pickaxe `-S`), whose diff changes a line matching a **regex** (`-G`), or whose **message**
+  matches (`msg`); optional ignore-case, **All refs** (every branch and tag, not just the current
+  one) and a path to scope the search to. The query is passed glued to its option, so text that looks
+  like a flag is still searched for.
+- **Cherry-pick / Revert** — the **⇡** / **⟲** buttons on every commit row (Repository Log, Reflog,
+  Search History) apply a commit onto the current branch or commit its undo (confirmed). A run that
+  stops on conflicts is not an error: the app opens **Merge Conflicts** on the stopped tree. git never
+  gets an editor — the host has no terminal for one. Over the bus (`zmax.git.cherryPick` / `zmax.git.revert`)
+  a landed commit is announced as `zmax.git.committed` and a stop as `zmax.git.stopped` with the
+  unmerged paths, which `zmax.conflicts.*` then resolves and `zmax.git.opContinue` finishes.
+- **Merge Conflicts** — Emacs `smerge-mode` over the whole tree instead of one buffer: every hunk in
+  every file carrying conflict markers — from a merge, rebase, cherry-pick, revert or `stash pop`
+  alike — with its marker labels and the size of each side; click a hunk to read it, then keep
+  **Ours**, **Theirs**, **Both** (ours then theirs) or, on a diff3 / zdiff3 hunk, the common **Base**.
+  When a file's last hunk is resolved and git lists the file as unmerged, it is staged (the vc-git
+  default), so **Continue** is one click; **Abort** restores the branch as it was before the operation
+  started (confirmed). A marker is seven marker characters followed by a space or the end of the line,
+  exactly as git writes it — a Markdown `========` rule is not one — and a file whose markers do not
+  close is listed with the line where they break but never rewritten.
 - **Project Stats** — a read-only report of file / line / byte counts across the tree, broken down by
   extension (binary and oversized files skipped for line counting).
 - **Batch Plan** — the shared arrangement grid over the project: paint which of the reversible
@@ -661,7 +691,9 @@ the terminal. zmax-gui's own vocabulary raises none of them — every published 
 one drives the real `main.js` / `panels.js` against a stubbed Tauri host and asserts what they send
 to Rust — the floating shell's PTY geometry (at spawn and on every later resize), the documents
 search with its formats filter, the Git Commit panel (message, amend pre-fill, empty-message refusal)
-and Keep / Flush Lines (preview, mode flip, apply only on Apply).
+Keep / Flush Lines (preview, mode flip, apply only on Apply), Merge Conflicts (per-hunk resolution, staging
+only a file git lists as unmerged once its last hunk is gone, Continue / Abort), a cherry-pick that
+stops on conflicts opening Merge Conflicts, and Search History (exclusive modes, every flag sent).
 
 ### Reversible verbs: a refactor is a transaction
 
@@ -679,10 +711,10 @@ that: reads and previews as `pure`, and every file mutation as `inverse` with a 
 
 | Class | Verbs | Compensation |
 | --- | --- | --- |
-| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted,coverage,record}`, and every `*.preview` dry run | none needed — nothing is written |
-| `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.lines.{filterApply,dedupeApply}`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
-| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.git.tagCreate` (undone by deleting that tag), `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
-| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop,commit,tagDelete}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
+| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads (including `zmax.git.{reflog,logSearch,opState}`), `zmax.conflicts.{scan,file}`, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted,coverage,record}`, and every `*.preview` dry run | none needed — nothing is written |
+| `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.lines.{filterApply,dedupeApply}`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.conflicts.resolve`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
+| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.git.tagCreate` (undone by deleting that tag), `zmax.git.branchAt` (undone by deleting that branch only while it still points at the commit it was made at), `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
+| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop,commit,tagDelete,cherryPick,revert,opAbort,opContinue}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
 
 A mutating verb learns the exact paths it is about to touch **from its own dry run**, snapshots
 those, then applies. So `zmax.replace.apply` snapshots the files its preview named — source files and

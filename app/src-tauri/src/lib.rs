@@ -4,6 +4,7 @@
 
 mod bus;
 mod commands;
+mod conflicts;
 mod doc_blame;
 mod doc_search;
 mod edit_ops;
@@ -11,8 +12,10 @@ mod editor_tools;
 mod encoding_ops;
 mod fs_ops;
 mod git_ext;
+mod git_history;
 mod git_more;
 mod git_ops;
+mod git_pick;
 mod git_tools;
 mod line_filter;
 mod open_intake;
@@ -264,6 +267,24 @@ pub fn run() {
             // Line filters (panels.js): keep / flush lines + delete duplicate lines over one file.
             line_filter::filter_file_lines,
             line_filter::dedupe_file_lines,
+            // Merge conflicts (panels.js): smerge over the tree — scan every file with conflict markers,
+            // read one file's hunks, resolve a hunk or all of them to ours / theirs / base / both / all.
+            conflicts::conflict_scan,
+            conflicts::conflict_file,
+            conflicts::resolve_conflicts,
+            // Git history (panels.js): reflog, branch at a revision (+ its compare-and-delete
+            // inverse), and pickaxe / diff-regex / message history search.
+            git_history::git_reflog,
+            git_history::git_branch_at,
+            git_history::git_branch_delete_at,
+            git_history::git_log_search,
+            // Applying commits (panels.js): cherry-pick, revert, and the stopped-operation state /
+            // abort / continue.
+            git_pick::git_cherry_pick,
+            git_pick::git_revert,
+            git_pick::git_op_state,
+            git_pick::git_op_abort,
+            git_pick::git_op_continue,
             // Shared multi-pane file browser (zpwr-file-browser crate, `tauri` feature) — the fs_*
             // commands its front end (fb-backend.js → file-browser.js) calls, plus the watcher.
             zpwr_file_browser::commands::fs_list_dir,
