@@ -1889,6 +1889,370 @@
     });
   }
 
+  // A dim one-line caption (headers, empty states, section titles) — the `zp-count` line every git
+  // panel uses.
+  function captionLine(text) {
+    var d = document.createElement("div");
+    d.className = "zp-count";
+    d.textContent = text;
+    return d;
+  }
+
+  // ── remotes, fetch / pull / push (git_remote.rs) ─────────────────────────────────────────────────
+  // Magit's status header and its Unpushed / Unpulled sections, plus the remote list. A pull that
+  // stops on conflicts opens Merge Conflicts, exactly as a stopped cherry-pick does.
+  function gitRemotes() {
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var head = captionLine("");
+      body.appendChild(head);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+      var diffPre = document.createElement("pre");
+      diffPre.className = "zp-diff";
+      body.appendChild(diffPre);
+      var remotes = [];
+      var status = null;
+
+      function reload() {
+        Promise.all([invoke("git_remotes", { root: root }), invoke("git_upstream_status", { root: root })]).then(function (r) {
+          remotes = r[0] || [];
+          render(r[1]);
+        }, function (err) { toast(T("zmax.panel.not_git", "Not a git repository") + (err ? ": " + err : ""), "error"); });
+      }
+      function render(st) {
+        status = st;
+        list.textContent = "";
+        diffPre.textContent = "";
+        head.textContent = (st.branch || T("zmax.panel.detached", "(detached HEAD)")) + "  →  " +
+          (st.upstream ? st.upstream + "   ↑" + st.ahead + "  ↓" + st.behind : T("zmax.panel.no_upstream", "no upstream"));
+        if (!remotes.length) list.appendChild(captionLine(T("zmax.panel.no_remotes", "No remotes")));
+        remotes.forEach(function (rm) {
+          var row = document.createElement("div");
+          row.className = "zp-row";
+          var badge = document.createElement("span");
+          badge.className = "zp-badge";
+          badge.textContent = rm.name;
+          var name = document.createElement("span");
+          name.className = "zp-row-primary";
+          name.textContent = rm.fetch_url;
+          var sec = document.createElement("span");
+          sec.className = "zp-row-secondary";
+          sec.textContent = rm.push_url === rm.fetch_url ? "" : T("zmax.panel.push_to", "push →") + " " + rm.push_url;
+          row.appendChild(badge);
+          row.appendChild(name);
+          row.appendChild(sec);
+          row.appendChild(gitActBtn("⇣", T("zmax.panel.fetch", "Fetch"), "", function () { fetchRemote(rm.name); }));
+          row.appendChild(gitActBtn("✕", T("zmax.panel.remote_remove", "Remove remote"), "zp-danger", function () {
+            ZGui.modal.confirm({ title: T("zmax.panel.remote_remove", "Remove remote"), message: T("zmax.panel.remote_remove_msg", "Remove this remote and its remote-tracking branches?") + "\n" + rm.name }).then(function (ok) {
+              if (!ok) return;
+              invoke("git_remote_remove", { root: root, name: rm.name, expectUrl: null }).then(reload, function (err) { toast(String(err), "error"); });
+            });
+          }));
+          list.appendChild(row);
+        });
+        [[st.unpushed, T("zmax.panel.unpushed", "Unpushed to")], [st.unpulled, T("zmax.panel.unpulled", "Unpulled from")]].forEach(function (sect) {
+          if (!sect[0] || !sect[0].length) return;
+          list.appendChild(captionLine(sect[1] + " " + st.upstream + " (" + sect[0].length + ")"));
+          sect[0].forEach(function (c) { list.appendChild(commitRow(root, c.hash, c.short, c.subject, c.author + " · " + c.date, diffPre)); });
+        });
+      }
+      function fetchRemote(remote) {
+        toast(T("zmax.panel.fetching", "Fetching…"));
+        invoke("git_fetch", { root: root, remote: remote || null, prune: true }).then(function (r) {
+          render(r.status);
+          toast(T("zmax.panel.fetched", "Fetched") + (remote ? ": " + remote : ""));
+        }, function (err) { toast(String(err), "error"); });
+      }
+      function pull(mode) {
+        invoke("git_pull", { root: root, mode: mode }).then(function (r) {
+          if (r && r.stopped) {
+            toast(T("zmax.panel.pull", "Pull") + ": " + T("zmax.panel.stopped_conflicts", "stopped on conflicts in") + " " + r.unmerged.length + " " + T("zmax.panel.files", "files"), "error");
+            mergeConflicts();
+            return;
+          }
+          toast(r && r.before !== r.after ? T("zmax.panel.pulled", "Pulled") : T("zmax.panel.up_to_date", "Already up to date"));
+          reload();
+        }, function (err) { toast(String(err), "error"); });
+      }
+      // With an upstream, push there. Without one, ask which remote and record it as the upstream
+      // (`push -u`), defaulting to the first remote.
+      function push(lease) {
+        var go = function (remote) {
+          invoke("git_push", { root: root, remote: remote, branch: null, setUpstream: !!remote, forceWithLease: !!lease }).then(function (r) {
+            render(r.status);
+            toast(T("zmax.panel.pushed", "Pushed") + (r.status.upstream ? ": " + r.status.upstream : ""));
+          }, function (err) { toast(String(err), "error"); });
+        };
+        if (status && status.upstream) {
+          if (!lease) { go(null); return; }
+          ZGui.modal.confirm({ title: T("zmax.panel.push_lease", "Push --force-with-lease"), message: T("zmax.panel.push_lease_msg", "Overwrite the remote branch? Refused if it has commits this repository has not fetched.") }).then(function (ok) { if (ok) go(null); });
+          return;
+        }
+        ZGui.modal.prompt({ title: T("zmax.panel.push", "Push"), message: T("zmax.panel.push_remote", "No upstream yet — push to remote:"), value: remotes.length ? remotes[0].name : "" }).then(function (remote) {
+          if (remote && remote.trim()) go(remote.trim());
+        }).catch(function () {});
+      }
+      function addRemote() {
+        ZGui.modal.prompt({ title: T("zmax.panel.remote_add", "Add Remote"), message: T("zmax.panel.remote_name", "Remote name:"), value: remotes.length ? "" : "origin" }).then(function (name) {
+          if (!name || !name.trim()) return;
+          ZGui.modal.prompt({ title: T("zmax.panel.remote_add", "Add Remote"), message: T("zmax.panel.remote_url", "URL or path:"), placeholder: "git@host:owner/repo.git" }).then(function (url) {
+            if (!url || !url.trim()) return;
+            invoke("git_remote_add", { root: root, name: name.trim(), url: url.trim() }).then(reload, function (err) { toast(String(err), "error"); });
+          }).catch(function () {});
+        }).catch(function () {});
+      }
+
+      ZGui.modal.open({
+        title: T("zmax.panel.remotes", "Git Remotes"),
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [
+          { label: "＋ " + T("zmax.panel.remote_add", "Add Remote"), close: false, onClick: addRemote },
+          { label: T("zmax.panel.fetch_all", "Fetch All"), close: false, onClick: function () { fetchRemote(null); } },
+          { label: T("zmax.panel.pull", "Pull"), close: false, onClick: function () { pull("ff-only"); } },
+          { label: T("zmax.panel.pull_rebase", "Pull --rebase"), close: false, onClick: function () { pull("rebase"); } },
+          { label: T("zmax.panel.push", "Push"), close: false, onClick: function () { push(false); } },
+          { label: T("zmax.panel.push_lease", "Push --force-with-lease"), close: false, onClick: function () { push(true); } },
+          { label: T("zmax.panel.refresh", "Refresh"), close: false, onClick: reload },
+          { label: T("zmax.dialog.close", "Close"), close: true },
+        ],
+      });
+      reload();
+    });
+  }
+
+  // ── git bisect (git_bisect.rs) ───────────────────────────────────────────────────────────────────
+  // Not bisecting: Start asks for the bad revision (HEAD) and the good ones. Bisecting: the commit
+  // under test, git's progress line, every verdict so far, and Good / Bad / Skip / Run… / Reset.
+  function gitBisect() {
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var head = captionLine("");
+      body.appendChild(head);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+      var diffPre = document.createElement("pre");
+      diffPre.className = "zp-diff";
+      body.appendChild(diffPre);
+
+      function reload() { invoke("git_bisect_state", { root: root }).then(render, fail); }
+      function fail(err) { toast(String(err), "error"); }
+      function render(st) {
+        list.textContent = "";
+        diffPre.textContent = st.output || "";
+        if (!st.active) { head.textContent = T("zmax.panel.bisect_idle", "Not bisecting — Start to search for the commit that introduced a change"); return; }
+        if (st.first_bad) {
+          head.textContent = T("zmax.panel.bisect_found", "First bad commit") + ": " + st.first_bad.short + " " + st.first_bad.subject;
+          list.appendChild(commitRow(root, st.first_bad.hash, "✗", st.first_bad.subject, st.first_bad.short, diffPre));
+        } else {
+          head.textContent = T("zmax.panel.bisect_testing", "Testing") + " " + (st.current ? st.current.short + " " + st.current.subject : "") +
+            (st.remaining != null ? "  ·  " + st.remaining + " " + T("zmax.panel.bisect_left", "left, roughly") + " " + st.steps + " " + T("zmax.panel.bisect_steps", "steps") : "");
+        }
+        st.log.slice().reverse().forEach(function (v) {
+          list.appendChild(commitRow(root, v.commit.hash, v.verdict, v.commit.subject, v.commit.short, diffPre));
+        });
+      }
+      function step(cmd, args) {
+        invoke(cmd, Object.assign({ root: root }, args)).then(render, fail);
+      }
+      function start() {
+        ZGui.modal.prompt({ title: T("zmax.panel.bisect", "Git Bisect"), message: T("zmax.panel.bisect_bad", "Bad revision (has the change):"), value: "HEAD" }).then(function (bad) {
+          if (bad == null) return;
+          ZGui.modal.prompt({ title: T("zmax.panel.bisect", "Git Bisect"), message: T("zmax.panel.bisect_good", "Good revisions (before the change), space-separated:"), placeholder: "v1.0" }).then(function (good) {
+            if (!good || !good.trim()) return;
+            step("git_bisect_start", { bad: bad.trim() || null, good: good.trim().split(/\s+/) });
+          }).catch(function () {});
+        }).catch(function () {});
+      }
+      function run() {
+        ZGui.modal.prompt({ title: T("zmax.panel.bisect_run", "Run…"), message: T("zmax.panel.bisect_run_msg", "Test command (exit 0 = good, 125 = skip, other = bad):"), placeholder: "cargo test --lib -- parser" }).then(function (cmd) {
+          if (cmd && cmd.trim()) step("git_bisect_run", { command: cmd.trim() });
+        }).catch(function () {});
+      }
+
+      ZGui.modal.open({
+        title: T("zmax.panel.bisect", "Git Bisect"),
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [
+          { label: T("zmax.panel.bisect_start", "Start…"), close: false, onClick: start },
+          { label: T("zmax.panel.bisect_mark_good", "Good"), close: false, onClick: function () { step("git_bisect_mark", { verdict: "good", rev: null }); } },
+          { label: T("zmax.panel.bisect_mark_bad", "Bad"), close: false, onClick: function () { step("git_bisect_mark", { verdict: "bad", rev: null }); } },
+          { label: T("zmax.panel.bisect_mark_skip", "Skip"), close: false, onClick: function () { step("git_bisect_mark", { verdict: "skip", rev: null }); } },
+          { label: T("zmax.panel.bisect_run", "Run…"), close: false, onClick: run },
+          { label: T("zmax.panel.bisect_reset", "Reset"), close: false, onClick: function () { invoke("git_bisect_reset", { root: root }).then(reload, fail); } },
+          { label: T("zmax.dialog.close", "Close"), close: true },
+        ],
+      });
+      reload();
+    });
+  }
+
+  // ── line history (git_trace.rs: git log -L) ──────────────────────────────────────────────────────
+  // vc-region-history: pick a file, name a line range or a function, and read each commit's patch
+  // to just that range.
+  function lineHistory(path) {
+    if (!path) { pickFileThen(T("zmax.panel.line_history_pick", "Line History: pick a file"), function (p) { lineHistory(p); }); return; }
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var controls = document.createElement("div");
+      controls.className = "zp-opts";
+      function field(ph) {
+        var i = document.createElement("input");
+        i.type = "text"; i.className = "zp-input"; i.placeholder = ph;
+        i.autocomplete = "off"; i.autocapitalize = "off"; i.spellcheck = false; i.setAttribute("autocorrect", "off");
+        controls.appendChild(i);
+        return i;
+      }
+      var startIn = field(T("zmax.panel.line_start", "From line"));
+      var endIn = field(T("zmax.panel.line_end", "To line"));
+      var fnIn = field(T("zmax.panel.line_fn", "…or a function name (regex)"));
+      body.appendChild(controls);
+      var count = captionLine("");
+      body.appendChild(count);
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+      var diffPre = document.createElement("pre");
+      diffPre.className = "zp-diff";
+      body.appendChild(diffPre);
+
+      var run = debounce(function () {
+        var fn = fnIn.value.trim();
+        var s = parseInt(startIn.value, 10), e = parseInt(endIn.value, 10);
+        if (!fn && !(s > 0)) { count.textContent = ""; list.textContent = ""; return; }
+        var opts = fn ? { funcname: fn, limit: 200 } : { start: s, end: e > 0 ? e : s, limit: 200 };
+        invoke("git_log_lines", { root: root, path: path, opts: opts }).then(function (commits) {
+          list.textContent = "";
+          diffPre.textContent = "";
+          count.textContent = commits.length + " " + T("zmax.panel.commits", "commits");
+          commits.forEach(function (c) {
+            var row = document.createElement("div");
+            row.className = "zp-row";
+            var badge = document.createElement("span");
+            badge.className = "zp-badge";
+            badge.textContent = c.short;
+            var name = document.createElement("span");
+            name.className = "zp-row-primary";
+            name.textContent = c.subject;
+            var sec = document.createElement("span");
+            sec.className = "zp-row-secondary";
+            sec.textContent = c.author + " · " + c.date;
+            row.appendChild(badge);
+            row.appendChild(name);
+            row.appendChild(sec);
+            // The patch is already restricted to the range — no second round trip.
+            row.addEventListener("click", function () { diffPre.textContent = c.patch || T("zmax.panel.no_diff", "(no diff)"); });
+            list.appendChild(row);
+          });
+        }, function (err) { count.textContent = String(err); list.textContent = ""; });
+      }, 300);
+      [startIn, endIn, fnIn].forEach(function (i) { i.addEventListener("input", run); });
+
+      ZGui.modal.open({
+        title: T("zmax.panel.line_history", "Line History") + " — " + path,
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [{ label: T("zmax.dialog.close", "Close"), close: true }],
+      });
+      setTimeout(function () { startIn.focus(); }, 30);
+    });
+  }
+
+  // ── worktrees (git_worktree.rs) ──────────────────────────────────────────────────────────────────
+  function gitWorktrees() {
+    getRoot().then(function (root) {
+      var body = document.createElement("div");
+      body.className = "zp-git";
+      var list = document.createElement("div");
+      list.className = "zp-list";
+      body.appendChild(list);
+
+      function reload() {
+        invoke("git_worktrees", { root: root }).then(render, function (err) { toast(T("zmax.panel.not_git", "Not a git repository") + (err ? ": " + err : ""), "error"); });
+      }
+      function render(trees) {
+        list.textContent = "";
+        (trees || []).forEach(function (w) {
+          var row = document.createElement("div");
+          row.className = "zp-row";
+          var badge = document.createElement("span");
+          badge.className = "zp-badge";
+          badge.textContent = w.branch || (w.bare ? "bare" : T("zmax.panel.detached", "(detached HEAD)"));
+          var name = document.createElement("span");
+          name.className = "zp-row-primary";
+          name.textContent = w.path;
+          var flags = [String(w.head || "").slice(0, 8)];
+          if (w.main) flags.push(T("zmax.panel.worktree_main", "main worktree"));
+          if (w.locked != null) flags.push(T("zmax.panel.worktree_locked", "locked") + (w.locked ? ": " + w.locked : ""));
+          if (w.prunable != null) flags.push(T("zmax.panel.worktree_prunable", "prunable"));
+          var sec = document.createElement("span");
+          sec.className = "zp-row-secondary";
+          sec.textContent = flags.join(" · ");
+          row.appendChild(badge);
+          row.appendChild(name);
+          row.appendChild(sec);
+          if (!w.main) {
+            row.appendChild(gitActBtn("✕", T("zmax.panel.worktree_remove", "Remove worktree"), "zp-danger", function () { remove(w.path); }));
+          }
+          list.appendChild(row);
+        });
+      }
+      // A plain remove first; git refuses one holding modified or untracked files, and only then is
+      // the forced remove offered — as its own confirmation, naming what it discards.
+      function remove(path) {
+        ZGui.modal.confirm({ title: T("zmax.panel.worktree_remove", "Remove worktree"), message: T("zmax.panel.worktree_remove_msg", "Remove this worktree's directory?") + "\n" + path }).then(function (ok) {
+          if (!ok) return;
+          invoke("git_worktree_remove", { root: root, path: path, force: false }).then(reload, function (err) {
+            ZGui.modal.confirm({ title: T("zmax.panel.worktree_force", "Force remove"), message: String(err) + "\n\n" + T("zmax.panel.worktree_force_msg", "Remove it anyway, discarding its uncommitted changes?") }).then(function (force) {
+              if (!force) return;
+              invoke("git_worktree_remove", { root: root, path: path, force: true }).then(reload, function (e2) { toast(String(e2), "error"); });
+            });
+          });
+        });
+      }
+      // Path → branch (blank = detached at HEAD); an unknown branch name is created (`-b`).
+      function add() {
+        ZGui.modal.prompt({ title: T("zmax.panel.worktree_add", "Add Worktree"), message: T("zmax.panel.worktree_path", "Directory (relative to the project, or absolute):"), placeholder: "../hotfix" }).then(function (path) {
+          if (!path || !path.trim()) return;
+          ZGui.modal.prompt({ title: T("zmax.panel.worktree_add", "Add Worktree"), message: T("zmax.panel.worktree_branch", "Branch (an existing one is checked out, a new name is created; blank = detached HEAD):"), placeholder: "hotfix" }).then(function (branch) {
+            if (branch == null) return;
+            var b = branch.trim();
+            var made = b ? invoke("git_branches", { root: root }).then(function (bs) { return !(bs || []).some(function (x) { return x.name === b; }); }) : Promise.resolve(false);
+            made.then(function (isNew) {
+              return invoke("git_worktree_add", { root: root, path: path.trim(), branch: b || null, newBranch: isNew, rev: null });
+            }).then(function (w) { toast(T("zmax.panel.worktree_added", "Worktree added") + ": " + w.path); reload(); }, function (err) { toast(String(err), "error"); });
+          }).catch(function () {});
+        }).catch(function () {});
+      }
+      function prune() {
+        invoke("git_worktree_prune", { root: root }).then(function (gone) {
+          toast(T("zmax.panel.worktree_pruned", "Pruned") + ": " + gone.length);
+          reload();
+        }, function (err) { toast(String(err), "error"); });
+      }
+
+      ZGui.modal.open({
+        title: T("zmax.panel.worktrees", "Git Worktrees"),
+        body: body,
+        className: "zp-modal zp-git-modal",
+        actions: [
+          { label: "＋ " + T("zmax.panel.worktree_add", "Add Worktree"), close: false, onClick: add },
+          { label: T("zmax.panel.worktree_prune", "Prune"), close: false, onClick: prune },
+          { label: T("zmax.panel.refresh", "Refresh"), close: false, onClick: reload },
+          { label: T("zmax.dialog.close", "Close"), close: true },
+        ],
+      });
+      reload();
+    });
+  }
+
   // ── find definition (jump to where an exact symbol is declared) ───────────────────────────────────
   function findDefinition() {
     getRoot().then(function (root) {
@@ -2581,6 +2945,10 @@
       { id: "zmax.panel.mergeConflicts", label: G + T("zmax.panel.merge_conflicts", "Merge Conflicts"), run: mergeConflicts },
       { id: "zmax.panel.gitReflog", label: G + T("zmax.panel.reflog", "Git Reflog"), run: gitReflog },
       { id: "zmax.panel.historySearch", label: G + T("zmax.panel.history_search", "Search History"), run: historySearch },
+      { id: "zmax.panel.lineHistory", label: G + T("zmax.panel.line_history", "Line History"), run: function () { lineHistory(); } },
+      { id: "zmax.panel.gitRemotes", label: G + T("zmax.panel.remotes", "Git Remotes"), run: gitRemotes },
+      { id: "zmax.panel.gitBisect", label: G + T("zmax.panel.bisect", "Git Bisect"), run: gitBisect },
+      { id: "zmax.panel.gitWorktrees", label: G + T("zmax.panel.worktrees", "Git Worktrees"), run: gitWorktrees },
     ];
   }
   function registerPalette() { if (window.ZGui && ZGui.palette && ZGui.palette.register) ZGui.palette.register(myPaletteItems()); }

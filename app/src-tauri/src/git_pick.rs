@@ -65,7 +65,7 @@ fn git_path(root: &str, name: &str) -> Option<std::path::PathBuf> {
 /// rebase is a state directory. Checked rebase-first: a rebase replays its commits through the
 /// sequencer, so while one is stopped its state directory is the authority whatever pseudo-refs the
 /// stopped step left, and the right abort is the rebase's.
-fn current_op(root: &str) -> Option<&'static str> {
+pub(crate) fn current_op(root: &str) -> Option<&'static str> {
     if ["rebase-merge", "rebase-apply"]
         .iter()
         .any(|d| git_path(root, d).is_some_and(|p| p.is_dir()))
@@ -82,7 +82,7 @@ fn current_op(root: &str) -> Option<&'static str> {
     .map(|(_, op)| op)
 }
 
-fn unmerged(root: &str) -> Vec<String> {
+pub(crate) fn unmerged(root: &str) -> Vec<String> {
     git_noedit(root, &["diff", "--name-only", "--diff-filter=U"])
         .map(|s| {
             s.lines()

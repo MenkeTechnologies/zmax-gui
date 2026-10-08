@@ -363,3 +363,94 @@ test("history search carries the mode into the host's opts and keeps the caller'
     root: "/proj", query: "fn alpha", opts: { ignore_case: true, path: "src", mode: "regex" },
   });
 });
+
+test("remotes, bisect, line history and worktrees: reads are pure, network and checkout steps refuse a transaction", async () => {
+  const env = boot({ git_push: () => ({ output: "", status: { upstream: "origin/main" } }), git_bisect_mark: () => ({ active: true, first_bad: null }) });
+  const s = env.A.surface();
+  for (const id of ["zmax.git.remotes", "zmax.git.upstream", "zmax.git.bisectState", "zmax.git.lineLog", "zmax.git.worktrees"]) {
+    assert.equal(verbById(s, id).rev, "pure", id);
+  }
+  for (const id of ["zmax.git.remoteAdd", "zmax.git.worktreeAdd"]) assert.equal(verbById(s, id).rev, "inverse", id);
+  for (const id of ["zmax.git.remoteRemove", "zmax.git.fetch", "zmax.git.pull", "zmax.git.push", "zmax.git.bisectStart",
+    "zmax.git.bisectMark", "zmax.git.bisectRun", "zmax.git.bisectReset", "zmax.git.worktreeRemove", "zmax.git.worktreePrune"]) {
+    assert.equal(verbById(s, id).rev, "irreversible", id);
+  }
+  env.A.txnBegin();
+  await assert.rejects(() => env.A.call("zmax.git.push", {}), /not reversible/);
+  await assert.rejects(() => env.A.call("zmax.git.bisectMark", { verdict: "good" }), /not reversible/);
+  assert.equal(env.of("git_push").length + env.of("git_bisect_mark").length, 0, "a refused step must not have run");
+});
+
+test("a remote add is undone only while the remote still points at the URL it was added with", async () => {
+  const env = boot({
+    git_remote_add: (a) => ({ name: a.name, fetch_url: a.url, push_url: a.url }),
+    git_remote_remove: () => null,
+  });
+  const res = await env.A.call("zmax.git.remoteAdd", { name: "up", url: "/srv/up.git" });
+  await env.A.undo("zmax.git.remoteAdd", { name: "up", url: "/srv/up.git" }, res);
+  assert.deepEqual(env.of("git_remote_remove").map((c) => c.args), [{ root: "/proj", name: "up", expectUrl: "/srv/up.git" }],
+    "without the URL the undo could remove a remote someone re-pointed since");
+  await env.A.call("zmax.git.remoteRemove", { name: "old" });
+  assert.deepEqual(env.of("git_remote_remove")[1].args, { root: "/proj", name: "old", expectUrl: null });
+});
+
+test("a worktree add is undone by an unforced remove, then the branch it created is deleted at its commit", async () => {
+  const head = "c".repeat(40);
+  const env = boot({
+    git_worktree_add: (a) => ({ path: "/real" + a.path, branch: a.branch, head }),
+    git_worktree_remove: () => null,
+    git_branch_delete_at: () => null,
+  });
+  const made = await env.A.call("zmax.git.worktreeAdd", { path: "/w1", branch: "hotfix", newBranch: true });
+  await env.A.undo("zmax.git.worktreeAdd", {}, made);
+  assert.deepEqual(env.of("git_worktree_remove").map((c) => c.args), [{ root: "/proj", path: "/real/w1", force: false }],
+    "the undo removes the path git reported, and never forces");
+  assert.deepEqual(env.of("git_branch_delete_at").map((c) => c.args), [{ root: "/proj", name: "hotfix", hash: head }]);
+
+  // An existing branch was only checked out: the undo must not delete it.
+  const existing = await env.A.call("zmax.git.worktreeAdd", { path: "/w2", branch: "main" });
+  await env.A.undo("zmax.git.worktreeAdd", {}, existing);
+  assert.equal(env.of("git_worktree_remove").length, 2);
+  assert.equal(env.of("git_branch_delete_at").length, 1, "a pre-existing branch survives the undo");
+
+  // A failed remove (the checkout holds work) stops the undo before any branch is touched.
+  const env2 = boot({
+    git_worktree_add: (a) => ({ path: a.path, branch: a.branch, head }),
+    git_worktree_remove: () => new Error("contains modified or untracked files"),
+    git_branch_delete_at: () => null,
+  });
+  const r2 = await env2.A.call("zmax.git.worktreeAdd", { path: "/w3", branch: "x", newBranch: true });
+  await assert.rejects(() => env2.A.undo("zmax.git.worktreeAdd", {}, r2), /modified/);
+  assert.equal(env2.of("git_branch_delete_at").length, 0);
+});
+
+test("pull, push and bisect announce what happened", async () => {
+  let pull = { stopped: false, before: "a", after: "b", unmerged: [] };
+  let step = { active: true, first_bad: null };
+  const env = boot({
+    git_pull: () => pull,
+    git_push: () => ({ output: "", status: { upstream: "origin/dev" } }),
+    git_bisect_mark: () => step,
+  });
+  const seen = [];
+  for (const ev of ["zmax.git.pulled", "zmax.git.stopped", "zmax.git.pushed", "zmax.git.bisectFound"]) {
+    env.A.on(ev, (p) => seen.push([ev, p]));
+  }
+  await env.A.call("zmax.git.pull", {});
+  assert.equal(env.of("git_pull")[0].args.mode, "ff-only", "the default pull never makes a merge commit");
+  pull = { stopped: false, before: "b", after: "b", unmerged: [] };
+  await env.A.call("zmax.git.pull", { mode: "rebase" });
+  pull = { stopped: true, op: "rebase", unmerged: ["f"], before: "b", after: "b" };
+  await env.A.call("zmax.git.pull", { mode: "rebase" });
+  await env.A.call("zmax.git.push", { remote: "origin", setUpstream: true });
+  assert.deepEqual(env.of("git_push")[0].args, { root: "/proj", remote: "origin", branch: null, setUpstream: true, forceWithLease: false });
+  await env.A.call("zmax.git.bisectMark", { verdict: "bad" });
+  step = { active: true, first_bad: { hash: "h", short: "h", subject: "broke it" } };
+  await env.A.call("zmax.git.bisectMark", { verdict: "bad" });
+  assert.deepEqual(seen, [
+    ["zmax.git.pulled", { root: "/proj", before: "a", after: "b" }],
+    ["zmax.git.stopped", { root: "/proj", op: "rebase", unmerged: ["f"] }],
+    ["zmax.git.pushed", { root: "/proj", upstream: "origin/dev" }],
+    ["zmax.git.bisectFound", { root: "/proj", hash: "h", subject: "broke it" }],
+  ], "an up-to-date pull and an unfinished bisect step announce nothing");
+});

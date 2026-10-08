@@ -57,6 +57,11 @@ zmax-gui/
 │   ├─ git_history.rs    reflog, branch at a revision (+ compare-and-delete undo), pickaxe / regex /
 │   │                    message history search
 │   ├─ git_pick.rs       cherry-pick / revert + the stopped operation's state / abort / continue
+│   ├─ git_remote.rs     remotes (list / add / remove), upstream ahead / behind + unpushed / unpulled,
+│   │                    fetch, pull (ff-only / rebase / merge), push (-u, --force-with-lease)
+│   ├─ git_bisect.rs     bisect start / good / bad / skip / run / reset, state read from `git bisect log`
+│   ├─ git_trace.rs      line-range / function history with range-restricted patches (`git log -L`)
+│   ├─ git_worktree.rs   worktrees: list / add / remove (unforced = the add's undo) / prune
 │   ├─ conflicts.rs      merge-conflict hunks across the tree, resolved to ours / theirs / base / both / all
 │   ├─ line_filter.rs    keep / flush lines + delete duplicate lines over one file
 │   ├─ workbench_ext.rs  persisted snippets + project code-stats (files/lines by extension)
@@ -119,7 +124,8 @@ from the **⌘K command palette** (and dedicated shortcuts). Every result is ope
 editor (`:open <path>:<line>:<col>`); the OS-side work (walking the tree, grepping, filesystem
 mutations, git) lives in the Rust `project.rs` / `editor_tools.rs` / `git_tools.rs` / `git_ext.rs` /
 `text_tools.rs` / `edit_ops.rs` / `encoding_ops.rs` / `git_more.rs` / `git_ops.rs` / `git_history.rs` /
-`git_pick.rs` / `conflicts.rs` / `line_filter.rs` / `workbench_ext.rs` commands, so
+`git_pick.rs` / `git_remote.rs` / `git_bisect.rs` / `git_trace.rs` / `git_worktree.rs` /
+`conflicts.rs` / `line_filter.rs` / `workbench_ext.rs` commands, so
 results are fast and the editor stays the single source of truth.
 
 - **Quick Open** (`⌘P`) — fuzzy file finder over the project tree (VCS/build dirs pruned), boundary-
@@ -256,6 +262,38 @@ results are fast and the editor stays the single source of truth.
   started (confirmed). A marker is seven marker characters followed by a space or the end of the line,
   exactly as git writes it — a Markdown `========` rule is not one — and a file whose markers do not
   close is listed with the line where they break but never rewritten.
+- **Git Remotes** — Magit's status header and its *Unpushed to* / *Unpulled from* sections: the
+  current branch, its upstream and how far **ahead** / **behind** it is, with the commits on each
+  side (click one for its diff); every remote with its fetch URL (and push URL where it differs),
+  **⇣ Fetch** per remote or **Fetch All** (pruning deleted branches), **Add Remote** and **✕**
+  remove (confirmed). **Pull** fast-forwards only, so it never makes a merge commit; **Pull
+  --rebase** replays local commits; a pull that stops on conflicts opens **Merge Conflicts** like a
+  stopped cherry-pick. **Push** goes to the upstream, or — on a branch with none — asks which remote
+  and records it as the upstream (`push -u`). The only force on offer is **Push
+  --force-with-lease** (confirmed), which git refuses when the remote branch holds commits this
+  repository has not fetched. Network commands run with credential prompts disabled, since the
+  host has no terminal to answer one: a remote that needs a password fails with git's own message.
+  Over the bus a pull that moved `HEAD` is announced as `zmax.git.pulled`, a push as
+  `zmax.git.pushed`, and a stopped pull as `zmax.git.stopped`.
+- **Git Bisect** — `magit-bisect`: **Start…** between a bad revision (blank = `HEAD`) and one or
+  more good ones, then mark the checked-out commit **Good** / **Bad** / **Skip** while the panel
+  shows the commit under test, git's "N left, roughly M steps", and every verdict so far; or
+  **Run…** a test command at every step (exit 0 = good, 125 = skip, any other = bad) and let git
+  find it unattended. When git names the **first bad commit** it heads the panel, click for its
+  diff. **Reset** returns to the branch the bisect started from. The state is read back from
+  `git bisect log`, so a bisect started in a terminal, or before a restart, shows the same. Over the
+  bus, the step that makes git name the culprit announces it as `zmax.git.bisectFound`.
+- **Line History** — Emacs `vc-region-history` / `magit-log-trace-definition` (`git log -L`): pick
+  a file, then give a **line range** (a lone start line traces that one line) or a **function
+  name** regex, and get every commit that changed exactly that range — followed as lines are
+  inserted above it — each with the patch **restricted to the range**.
+- **Git Worktrees** — `magit-worktree`: every checkout of the repository with its branch (or
+  detached), HEAD and git's `locked` / `prunable` flags. **Add Worktree** takes a directory and a
+  branch — an existing branch is checked out there, a new name is created (`-b`), blank is a
+  detached `HEAD`. **✕** removes one: the plain remove runs first and git refuses a checkout holding
+  modified or untracked files; only then is the forced remove offered, as a second confirmation that
+  shows git's reason. The main worktree has no remove. **Prune** drops the records of worktrees
+  whose directory was deleted by hand.
 - **Project Stats** — a read-only report of file / line / byte counts across the tree, broken down by
   extension (binary and oversized files skipped for line counting).
 - **Batch Plan** — the shared arrangement grid over the project: paint which of the reversible
@@ -693,7 +731,11 @@ to Rust — the floating shell's PTY geometry (at spawn and on every later resiz
 search with its formats filter, the Git Commit panel (message, amend pre-fill, empty-message refusal)
 Keep / Flush Lines (preview, mode flip, apply only on Apply), Merge Conflicts (per-hunk resolution, staging
 only a file git lists as unmerged once its last hunk is gone, Continue / Abort), a cherry-pick that
-stops on conflicts opening Merge Conflicts, and Search History (exclusive modes, every flag sent).
+stops on conflicts opening Merge Conflicts, Search History (exclusive modes, every flag sent), Git
+Remotes (push `-u` to the chosen remote when there is no upstream, the lease push, a stopped pull
+opening Merge Conflicts), Git Bisect (every good revision sent, the answer heading the panel), Line
+History (line, range and function forms) and Git Worktrees (new vs existing branch, the forced
+remove offered only after git refused the plain one).
 
 ### Reversible verbs: a refactor is a transaction
 
@@ -711,10 +753,10 @@ that: reads and previews as `pure`, and every file mutation as `inverse` with a 
 
 | Class | Verbs | Compensation |
 | --- | --- | --- |
-| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads (including `zmax.git.{reflog,logSearch,opState}`), `zmax.conflicts.{scan,file}`, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted,coverage,record}`, and every `*.preview` dry run | none needed — nothing is written |
+| `pure` | `zmax.project.*` (find files, search, symbols, markers, stats), `zmax.git.*` reads (including `zmax.git.{reflog,logSearch,opState,remotes,upstream,bisectState,lineLog,worktrees}`), `zmax.conflicts.{scan,file}`, `zmax.doc.blame`, `zmax.txn.{snapshots,interrupted,coverage,record}`, and every `*.preview` dry run | none needed — nothing is written |
 | `inverse` | `zmax.replace.apply`, `zmax.rename.apply`, `zmax.sort.apply`, `zmax.lines.{filterApply,dedupeApply}`, `zmax.cleanup.apply`, `zmax.align.apply`, `zmax.comment.apply`, `zmax.encoding.apply`, `zmax.doc.replace`, `zmax.conflicts.resolve`, `zmax.file.{create,rename,copy,delete}`, `zmax.git.discard` | a **content snapshot** taken before the mutation (`txn.rs`) and written back by `undo()` |
-| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.git.tagCreate` (undone by deleting that tag), `zmax.git.branchAt` (undone by deleting that branch only while it still points at the commit it was made at), `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
-| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop,commit,tagDelete,cherryPick,revert,opAbort,opContinue}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
+| `inverse` (paired) | `zmax.git.stage` / `zmax.git.unstage`, `zmax.git.tagCreate` (undone by deleting that tag), `zmax.git.branchAt` (undone by deleting that branch only while it still points at the commit it was made at), `zmax.git.remoteAdd` (undone by removing that remote only while it still points at the URL it was added with), `zmax.git.worktreeAdd` (undone by an unforced remove, which git refuses once the checkout holds work, then deleting the branch the add created at the commit it was created at), `zmax.bookmark.add`, `zmax.snippet.add` | the opposite command |
+| `irreversible` | `zmax.git.{checkout,createBranch,stashSave,stashPop,stashDrop,commit,tagDelete,cherryPick,revert,opAbort,opContinue,remoteRemove,fetch,pull,push,bisectStart,bisectMark,bisectRun,bisectReset,worktreeRemove,worktreePrune}`, `zmax.editor.{open,ex}`, `zmax.doc.{open,close}`, `zmax.txn.unwind` | none — repository-wide state, the editor's own buffers, or (for the unwind) a rewrite of the whole tree a transaction touched |
 
 A mutating verb learns the exact paths it is about to touch **from its own dry run**, snapshots
 those, then applies. So `zmax.replace.apply` snapshots the files its preview named — source files and

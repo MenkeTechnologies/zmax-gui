@@ -203,6 +203,35 @@
     };
   }
 
+  // A verb that invokes `cmd` on the project root (or the caller's `root`), with the extra args
+  // `pick(a)` builds from the caller's (none when omitted).
+  function onRoot(id, label, rev, cmd, params, returns, pick) {
+    return {
+      id: id, label: label, params: [P("root", "string")].concat(params || []), returns: returns || "object", rev: rev,
+      run: function (args) {
+        return withRoot(args).then(function (a) {
+          return invoke(cmd, Object.assign({ root: a.root }, pick ? pick(a) : {}));
+        });
+      },
+    };
+  }
+
+  // A bisect step: irreversible (it checks out another commit), and the step that makes git name
+  // the first bad commit announces it as `zmax.git.bisectFound`.
+  function bisectStep(id, label, cmd, params, pick) {
+    var verb = onRoot(id, label, "irreversible", cmd, params, "object", pick);
+    var run = verb.run;
+    verb.run = function (args) {
+      return withRoot(args).then(function (a) {
+        return run(a).then(function (st) {
+          if (st && st.first_bad) emit("zmax.git.bisectFound", { root: a.root, hash: st.first_bad.hash, subject: st.first_bad.subject });
+          return st;
+        });
+      });
+    };
+    return verb;
+  }
+
   // ── project root ──────────────────────────────────────────────────────────────────────────────
   // `list_dir(null)` answers with the host's current directory, the same root panels.js works from.
   var rootCache = null;
@@ -802,6 +831,109 @@
         params: [P("root", "string")],
         run: function (args) { return withRoot(args).then(function (a) { return invoke("git_op_continue", { root: a.root }); }); },
       },
+      // ── remotes / fetch / pull / push (git_remote.rs) ──────────────────────────────────────────
+      onRoot("zmax.git.remotes", "Every remote with its fetch and push URL", "pure", "git_remotes", [], "array"),
+      onRoot("zmax.git.upstream", "The branch against its upstream: ahead, behind, unpushed and unpulled commits", "pure", "git_upstream_status", [], "object"),
+      {
+        // Adding a remote writes one config section and fetches nothing, so removing it is exact —
+        // provided it still points where it was added. The inverse passes the URL it added, and the
+        // host refuses to remove a remote that has been re-pointed since.
+        id: "zmax.git.remoteAdd", label: "Add a remote (no fetch)", rev: "inverse", returns: "object",
+        params: [P("root", "string"), P("name", "string", true), P("url", "string", true)],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_remote_add", { root: a.root, name: a.name, url: a.url })
+              .then(function (r) { return { root: a.root, name: r.name, url: r.fetch_url, push_url: r.push_url }; });
+          });
+        },
+        undo: function (args, result) {
+          var r = result || {};
+          return invoke("git_remote_remove", { root: r.root, name: r.name, expectUrl: r.url });
+        },
+      },
+      // Removing a remote drops its remote-tracking branches; re-adding it does not bring them back.
+      onRoot("zmax.git.remoteRemove", "Remove a remote and its remote-tracking branches", "irreversible", "git_remote_remove",
+        [P("name", "string", true)], "null", function (a) { return { name: a.name, expectUrl: null }; }),
+      // A fetch moves remote-tracking refs to wherever the remote is now; there is no earlier
+      // position to put them back to that the remote would agree with.
+      onRoot("zmax.git.fetch", "Fetch one remote, or all of them", "irreversible", "git_fetch",
+        [P("remote", "string"), P("prune", "boolean")], "object",
+        function (a) { return { remote: a.remote || null, prune: !!a.prune }; }),
+      {
+        // mode: "ff-only" (default), "rebase", "merge". A stop on conflicts resolves, announced as
+        // `zmax.git.stopped` like a stopped cherry-pick; a pull that moved HEAD is `zmax.git.pulled`.
+        id: "zmax.git.pull", label: "Pull the upstream into the current branch", rev: "irreversible", returns: "object",
+        params: [P("root", "string"), P("mode", "string")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_pull", { root: a.root, mode: a.mode || "ff-only" }).then(function (r) {
+              if (r && r.stopped) emit("zmax.git.stopped", { root: a.root, op: r.op, unmerged: r.unmerged });
+              else if (r && r.before !== r.after) emit("zmax.git.pulled", { root: a.root, before: r.before, after: r.after });
+              return r;
+            });
+          });
+        },
+      },
+      {
+        // The only force is --force-with-lease. A push publishes: nothing local can take it back.
+        id: "zmax.git.push", label: "Push the current branch (to its upstream, or to a named remote)", rev: "irreversible", returns: "object",
+        params: [P("root", "string"), P("remote", "string"), P("branch", "string"), P("setUpstream", "boolean"), P("forceWithLease", "boolean")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_push", {
+              root: a.root, remote: a.remote || null, branch: a.branch || null,
+              setUpstream: !!a.setUpstream, forceWithLease: !!a.forceWithLease,
+            }).then(function (r) {
+              emit("zmax.git.pushed", { root: a.root, upstream: r && r.status ? r.status.upstream : null });
+              return r;
+            });
+          });
+        },
+      },
+      // ── bisect (git_bisect.rs) ─────────────────────────────────────────────────────────────────
+      // Every bisect step checks out another commit under the user's working tree; none is
+      // compensable. The answer is announced as `zmax.git.bisectFound` the moment git names it.
+      onRoot("zmax.git.bisectState", "The bisect in progress: commit under test, verdicts, first bad commit", "pure", "git_bisect_state", [], "object"),
+      bisectStep("zmax.git.bisectStart", "Start bisecting between a bad and one or more good revisions", "git_bisect_start",
+        [P("bad", "string"), P("good", "array", true)], function (a) { return { bad: a.bad || null, good: a.good || [] }; }),
+      bisectStep("zmax.git.bisectMark", "Mark the commit under test (or a named one) good, bad or skip", "git_bisect_mark",
+        [P("verdict", "string", true), P("rev", "string")], function (a) { return { verdict: a.verdict, rev: a.rev || null }; }),
+      bisectStep("zmax.git.bisectRun", "Run a test command at every step until the first bad commit is found", "git_bisect_run",
+        [P("command", "string", true)], function (a) { return { command: a.command }; }),
+      onRoot("zmax.git.bisectReset", "End the bisect and return to the original branch", "irreversible", "git_bisect_reset", [], "null"),
+      // ── line history (git_trace.rs) ────────────────────────────────────────────────────────────
+      // opts: { start, end } (1-based, inclusive) or { funcname } (a regex), plus { limit }.
+      onRoot("zmax.git.lineLog", "Commits that changed a line range or a function, with the range's patch", "pure", "git_log_lines",
+        [P("path", "string", true), P("opts", "object", true)], "array", function (a) { return { path: a.path, opts: a.opts || {} }; }),
+      // ── worktrees (git_worktree.rs) ────────────────────────────────────────────────────────────
+      onRoot("zmax.git.worktrees", "Every worktree with its branch, HEAD and lock / prune flags", "pure", "git_worktrees", [], "array"),
+      {
+        // The inverse is a plain (unforced) remove, which git refuses once the checkout holds a
+        // modified or untracked file — so an undo can only take away a worktree nobody has written
+        // into. A branch the add created is then deleted by compare-and-delete at the commit it was
+        // created at, the same guard `zmax.git.branchAt` uses.
+        id: "zmax.git.worktreeAdd", label: "Add a worktree on a branch (new or existing) or detached", rev: "inverse", returns: "object",
+        params: [P("root", "string"), P("path", "string", true), P("branch", "string"), P("newBranch", "boolean"), P("rev", "string")],
+        run: function (args) {
+          return withRoot(args).then(function (a) {
+            return invoke("git_worktree_add", {
+              root: a.root, path: a.path, branch: a.branch || null, newBranch: !!a.newBranch, rev: a.rev || null,
+            }).then(function (w) {
+              return { root: a.root, path: w.path, branch: w.branch, head: w.head, createdBranch: a.newBranch && a.branch ? w.branch : null };
+            });
+          });
+        },
+        undo: function (args, result) {
+          var r = result || {};
+          return invoke("git_worktree_remove", { root: r.root, path: r.path, force: false }).then(function () {
+            if (!r.createdBranch) return null;
+            return invoke("git_branch_delete_at", { root: r.root, name: r.createdBranch, hash: r.head });
+          });
+        },
+      },
+      onRoot("zmax.git.worktreeRemove", "Remove a worktree (force discards its uncommitted changes)", "irreversible", "git_worktree_remove",
+        [P("path", "string", true), P("force", "boolean")], "null", function (a) { return { path: a.path, force: !!a.force }; }),
+      onRoot("zmax.git.worktreePrune", "Prune the records of worktrees whose directory is gone", "irreversible", "git_worktree_prune", [], "array"),
       oneWay("zmax.git.stashDrop", "Drop a stash entry", "git_stash_drop", [P("root", "string"), P("index", "number")]),
       {
         // Drives the editor PTY: the buffer state afterwards is the editor's, not ours, so there is
@@ -906,6 +1038,9 @@
       { id: "zmax.search.run", payload: "{ hits }" },
       { id: "zmax.git.committed", payload: "{ root, hash, subject }" },
       { id: "zmax.git.stopped", payload: "{ root, op, unmerged }" },
+      { id: "zmax.git.pulled", payload: "{ root, before, after }" },
+      { id: "zmax.git.pushed", payload: "{ root, upstream }" },
+      { id: "zmax.git.bisectFound", payload: "{ root, hash, subject }" },
       { id: "zmax.txn.compensated", payload: "{ verb, report, conflicted }" },
       { id: "zmax.txn.recovered", payload: "{ id, restored, conflicted, undeclared, divergent }" },
     ];

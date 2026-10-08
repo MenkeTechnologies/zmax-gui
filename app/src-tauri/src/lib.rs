@@ -11,12 +11,16 @@ mod edit_ops;
 mod editor_tools;
 mod encoding_ops;
 mod fs_ops;
+mod git_bisect;
 mod git_ext;
 mod git_history;
 mod git_more;
 mod git_ops;
 mod git_pick;
+mod git_remote;
 mod git_tools;
+mod git_trace;
+mod git_worktree;
 mod line_filter;
 mod open_intake;
 mod project;
@@ -285,6 +289,28 @@ pub fn run() {
             git_pick::git_op_state,
             git_pick::git_op_abort,
             git_pick::git_op_continue,
+            // Remotes (panels.js): list / add / remove, the upstream picture (ahead, behind, unpushed,
+            // unpulled), fetch, pull (ff-only / rebase / merge; a conflict stop is a result) and push.
+            git_remote::git_remotes,
+            git_remote::git_remote_add,
+            git_remote::git_remote_remove,
+            git_remote::git_upstream_status,
+            git_remote::git_fetch,
+            git_remote::git_pull,
+            git_remote::git_push,
+            // Bisect (panels.js): start, mark good / bad / skip, run a test command, state, reset.
+            git_bisect::git_bisect_state,
+            git_bisect::git_bisect_start,
+            git_bisect::git_bisect_mark,
+            git_bisect::git_bisect_run,
+            git_bisect::git_bisect_reset,
+            // Line-range / function history (panels.js): git log -L.
+            git_trace::git_log_lines,
+            // Worktrees (panels.js): list, add, remove (the add's inverse), prune.
+            git_worktree::git_worktrees,
+            git_worktree::git_worktree_add,
+            git_worktree::git_worktree_remove,
+            git_worktree::git_worktree_prune,
             // Shared multi-pane file browser (zpwr-file-browser crate, `tauri` feature) — the fs_*
             // commands its front end (fb-backend.js → file-browser.js) calls, plus the watcher.
             zpwr_file_browser::commands::fs_list_dir,

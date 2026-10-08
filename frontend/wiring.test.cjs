@@ -554,3 +554,153 @@ test("search history: the mode buttons are exclusive and every flag reaches git_
   assert.deepEqual(last, { mode: "regex", ignore_case: true, all: false, path: "src/", limit: 300 });
   assert.ok(g.classList.contains("active") && !s.classList.contains("active"), "exactly one mode is on");
 });
+
+// ── remotes, bisect, line history, worktrees ────────────────────────────────────────────────────
+
+// Scripted answers for ZGui.modal.prompt, consumed in order.
+function scriptPrompts(env, answers) {
+  const asked = [];
+  env.win.ZGui.modal.prompt = (o) => { asked.push(o); return Promise.resolve(answers.shift()); };
+  return asked;
+}
+const settle = async (n) => { for (let i = 0; i < (n || 6); i++) await tick(); };
+
+test("remotes: the header and sections reflect the upstream, and a branch with none is pushed with -u to the chosen remote", async () => {
+  const commit = (s) => ({ hash: s.repeat(10), short: s.repeat(8), author: "a", date: "2026-01-01", subject: "commit " + s, refs: "" });
+  const env = await bootPanels({
+    git_remotes: [{ name: "origin", fetch_url: "/srv/o.git", push_url: "/srv/o.git" }, { name: "fork", fetch_url: "/f", push_url: "ssh://p/f" }],
+    git_upstream_status: { branch: "dev", upstream: null, ahead: 0, behind: 0, unpushed: [], unpulled: [] },
+    git_push: { output: "", status: { branch: "dev", upstream: "fork/dev", ahead: 0, behind: 0, unpushed: [], unpulled: [commit("b")] } },
+  });
+  const opened = recordModals(env);
+  const asked = scriptPrompts(env, ["fork"]);
+  runCommand(env, "zmax.panel.gitRemotes");
+  await settle();
+  const modal = opened[opened.length - 1];
+  assert.equal(modal.title, "Git Remotes");
+  assert.ok(env.of("zp-row").some((r) => r.children.some((c) => c.textContent === "push → ssh://p/f")),
+    "a separate push URL is shown");
+
+  action(modal, "Push").onClick();
+  await settle();
+  assert.equal(asked[0].value, "origin", "the first remote is the default");
+  assert.deepEqual(env.sent("git_push").map((c) => c.args),
+    [{ root: "/proj", remote: "fork", branch: null, setUpstream: true, forceWithLease: false }]);
+  assert.ok(env.of("zp-count").some((n) => n.textContent === "dev  →  fork/dev   ↑0  ↓0"), "the header shows the new upstream");
+  assert.ok(env.of("zp-count").some((n) => n.textContent === "Unpulled from fork/dev (1)"));
+  assert.ok(rowFor(env, "commit b"), "the unpulled commit is listed");
+});
+
+test("remotes: a lease push is confirmed and sent to the upstream; a pull that stops opens Merge Conflicts", async () => {
+  const env = await bootPanels({
+    git_remotes: [{ name: "origin", fetch_url: "/o", push_url: "/o" }],
+    git_upstream_status: { branch: "main", upstream: "origin/main", ahead: 1, behind: 1, unpushed: [], unpulled: [] },
+    git_push: { output: "", status: { branch: "main", upstream: "origin/main", ahead: 0, behind: 0, unpushed: [], unpulled: [] } },
+    git_pull: { stopped: true, op: "rebase", unmerged: ["f.txt"], before: "a", after: "a", output: "" },
+    git_op_state: { op: "rebase", unmerged: ["f.txt"] },
+    conflict_scan: { total_hunks: 0, truncated: false, files: [] },
+  });
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.gitRemotes");
+  await settle();
+  const modal = opened[opened.length - 1];
+  action(modal, "Push --force-with-lease").onClick();
+  await settle();
+  assert.deepEqual(env.sent("git_push").map((c) => c.args),
+    [{ root: "/proj", remote: null, branch: null, setUpstream: false, forceWithLease: true }]);
+  action(modal, "Pull --rebase").onClick();
+  await settle();
+  assert.deepEqual(env.sent("git_pull").map((c) => c.args), [{ root: "/proj", mode: "rebase" }]);
+  assert.equal(opened[opened.length - 1].title, "Merge Conflicts");
+});
+
+test("bisect: Start sends every good revision, and the answer heads the panel", async () => {
+  const env = await bootPanels({
+    git_bisect_state: { active: false, log: [], first_bad: null, current: null, remaining: null, steps: null, output: "" },
+    git_bisect_start: { active: true, log: [], first_bad: null, current: { hash: "c4c4", short: "c4c4", subject: "c4" }, remaining: 3, steps: 2, output: "" },
+    git_bisect_mark: {
+      active: true, current: null, remaining: null, steps: null, output: "",
+      first_bad: { hash: "c5c5", short: "c5c5", subject: "c5" },
+      log: [{ verdict: "bad", commit: { hash: "c5c5", short: "c5c5", subject: "c5" } }],
+    },
+  });
+  const opened = recordModals(env);
+  scriptPrompts(env, ["", "v1.0  v1.1 "]);
+  runCommand(env, "zmax.panel.gitBisect");
+  await settle();
+  const modal = opened[opened.length - 1];
+  action(modal, "Start…").onClick();
+  await settle();
+  assert.deepEqual(env.sent("git_bisect_start").map((c) => c.args), [{ root: "/proj", bad: null, good: ["v1.0", "v1.1"] }],
+    "a blank bad revision means HEAD (the host's default), and the good list is split on whitespace");
+  assert.ok(env.of("zp-count").some((n) => n.textContent === "Testing c4c4 c4  ·  3 left, roughly 2 steps"));
+  action(modal, "Bad").onClick();
+  await settle();
+  assert.deepEqual(env.sent("git_bisect_mark")[0].args, { root: "/proj", verdict: "bad", rev: null });
+  assert.ok(env.of("zp-count").some((n) => n.textContent === "First bad commit: c5c5 c5"));
+});
+
+test("line history: a single line, a range and a function each reach git_log_lines, and a row shows its own range patch", async () => {
+  const env = await bootPanels({
+    find_files: [{ path: "/proj/src/m.c", rel: "src/m.c" }],
+    git_log_lines: [{ hash: "h1", short: "h1", author: "a", date: "d", subject: "tweak f", patch: "@@ -5 +5 @@\n-1\n+2" }],
+  });
+  const opened = recordModals(env);
+  runCommand(env, "zmax.panel.lineHistory");
+  await settle();
+  env.flush(); await settle();
+  const pick = rowFor(env, "m.c");
+  assert.ok(pick, "the file picker lists the file");
+  pick.fire("click");
+  await settle();
+  assert.equal(opened[opened.length - 1].title, "Line History — /proj/src/m.c");
+
+  const [startIn, endIn, fnIn] = env.of("zp-input").slice(-3);
+  const optsSent = () => env.sent("git_log_lines").map((c) => c.args.opts);
+  startIn.value = "7"; startIn.fire("input"); env.flush(); await settle();
+  endIn.value = "9"; endIn.fire("input"); env.flush(); await settle();
+  fnIn.value = " ^int f "; fnIn.fire("input"); env.flush(); await settle();
+  assert.deepEqual(optsSent(), [
+    { start: 7, end: 7, limit: 200 },
+    { start: 7, end: 9, limit: 200 },
+    { funcname: "^int f", limit: 200 },
+  ], "a lone start is a one-line range; a function name replaces the range");
+  assert.equal(env.sent("git_log_lines")[0].args.path, "/proj/src/m.c");
+
+  rowFor(env, "tweak f").fire("click");
+  const pre = env.of("zp-diff").pop();
+  assert.equal(pre.textContent, "@@ -5 +5 @@\n-1\n+2", "the row shows the range patch, not the whole commit");
+  assert.equal(env.sent("git_show_commit").length, 0);
+});
+
+test("worktrees: an unknown branch is created, a refused remove offers the forced one, the main worktree has no remove", async () => {
+  const env = await bootPanels({
+    git_worktrees: [
+      { path: "/proj", head: "a".repeat(40), branch: "main", detached: false, bare: false, main: true, locked: null, prunable: null },
+      { path: "/wt", head: "b".repeat(40), branch: null, detached: true, bare: false, main: false, locked: "usb", prunable: null },
+    ],
+    git_branches: [{ name: "main" }, { name: "dev" }],
+    git_worktree_add: (a) => ({ path: a.path, branch: a.branch, head: "c" }),
+    git_worktree_remove: (a) => (a.force ? null : Promise.reject("contains modified or untracked files")),
+  });
+  const opened = recordModals(env);
+  const confirms = [];
+  env.win.ZGui.modal.confirm = (o) => { confirms.push(o); return Promise.resolve(true); };
+  scriptPrompts(env, ["../hot", "hotfix", "../dev", "dev"]);
+  runCommand(env, "zmax.panel.gitWorktrees");
+  await settle();
+  const modal = opened[opened.length - 1];
+  assert.ok(!btn(rowFor(env, "/proj"), "✕"), "the main worktree cannot be removed");
+  assert.ok(rowFor(env, "/wt").children.some((c) => c.textContent === "bbbbbbbb · locked: usb"));
+
+  action(modal, "＋ Add Worktree").onClick(); await settle(8);
+  action(modal, "＋ Add Worktree").onClick(); await settle(8);
+  assert.deepEqual(env.sent("git_worktree_add").map((c) => [c.args.branch, c.args.newBranch]), [["hotfix", true], ["dev", false]],
+    "a name with no branch behind it is created; an existing branch is only checked out");
+
+  btn(rowFor(env, "/wt"), "✕").fire("click", { stopPropagation() {} });
+  await settle(8);
+  assert.deepEqual(env.sent("git_worktree_remove").map((c) => c.args.force), [false, true],
+    "the plain remove runs first; force only after git refused it and the user confirmed again");
+  assert.ok(confirms[1].message.includes("contains modified or untracked files"), "git's reason is shown before forcing");
+});
