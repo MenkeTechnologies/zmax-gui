@@ -20,4 +20,4 @@ allowBuilds:
 # produced. And 0.56.0 is the latest release, so even taking it would leave the
 # 3.4.13 floor unmet.
 overrides:
-  dompurify: ">=3.4.14"
+  dompurify: ">=3.4.16"
